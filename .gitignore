@@ -1,0 +1,10 @@
+*
+!**/
+target
+!trna.fa
+!*.rs
+!*.py
+!*.tar.bz2
+!Cargo.toml
+!.gitignore
+!README.md
