@@ -22,6 +22,20 @@ pub type ProgressiveTree = Graph<RnaId, Mea>;
 pub type ClusterSizes = HashMap<RnaId, usize>;
 pub type NodeIndexes = HashMap<RnaId, NodeIndex<DefaultIx>>;
 
+pub struct MeaCss<T> {
+  pub bpa_pos_pairs: PosPairs<T>,
+  pub ea: Mea,
+}
+
+impl<T> MeaCss<T> {
+  pub fn new() -> MeaCss<T> {
+    MeaCss {
+      bpa_pos_pairs: PosPairs::<T>::new(),
+      ea: 0.,
+    }
+  }
+}
+
 impl<T> MeaSeqAlign<T> {
   pub fn new() -> MeaSeqAlign<T> {
     MeaSeqAlign {
@@ -101,7 +115,19 @@ where
     new_cluster_id += 1;
   }
   let root = node_indexes[&(new_cluster_id - 1)];
-  recursive_mea_seq_align(&progressive_tree, root, align_prob_mat_pairs_with_rna_id_pairs, &fasta_records, gamma)
+  let mut mea_seq_align = recursive_mea_seq_align(&progressive_tree, root, align_prob_mat_pairs_with_rna_id_pairs, &fasta_records, gamma);
+  for col in mea_seq_align.cols.iter_mut() {
+    let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
+    pairs.sort_by_key(|x| x.1);
+    *col = pairs.iter().map(|x| x.0).collect();
+  }
+  for pos_maps in mea_seq_align.pos_map_sets.iter_mut() {
+    let mut pairs: Vec<(T, RnaId)> = pos_maps.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
+    pairs.sort_by_key(|x| x.1);
+    *pos_maps = pairs.iter().map(|x| x.0).collect();
+  }
+  mea_seq_align.rna_ids.sort();
+  mea_seq_align
 }
 
 pub fn recursive_mea_seq_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, fasta_records: &FastaRecords, gamma: Prob) -> MeaSeqAlign<T>
@@ -260,4 +286,67 @@ pub fn revert_char(c: Base) -> u8 {
     PSEUDO_BASE => {GAP},
     _ => {assert!(false); GAP},
   }
+}
+
+pub fn consalifold<T>(mix_bpp_mat: &ProbMat, gamma: Prob, sa: &MeaSeqAlign<T>) -> MeaCss<T>
+where
+  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer,
+{
+  let sa_len = sa.cols.len();
+  let mut mea_mat = vec![vec![0.; sa_len]; sa_len];
+  let sa_len = T::from_usize(sa_len).unwrap();
+  let gamma_plus_1 = gamma + 1.;
+  for sub_sa_len in range_inclusive(T::one(), sa_len) {
+    for i in range_inclusive(T::zero(), sa_len - sub_sa_len) {
+      let j = i + sub_sa_len - T::one();
+      let (long_i, long_j) = (i.to_usize().unwrap(), j.to_usize().unwrap());
+      if i == j {
+        continue;
+      }
+      let mut mea = mea_mat[long_i + 1][long_j];
+      let ea = mea_mat[long_i][long_j - 1];
+      if ea > mea {
+        mea = ea;
+      }
+      let ea = mea_mat[long_i + 1][long_j - 1] + gamma_plus_1 * mix_bpp_mat[long_i][long_j] - 1.;
+      if ea > mea {
+        mea = ea;
+      }
+      for k in long_i .. long_j {
+        let ea = mea_mat[long_i][k] + mea_mat[k + 1][long_j];
+        if ea > mea {
+          mea = ea;
+        }
+      }
+      mea_mat[long_i][long_j] = mea;
+    }
+  }
+  let mut mea_css = MeaCss::new();
+  let mut pos_pair_stack = vec![(T::zero(), sa_len - T::one())];
+  while pos_pair_stack.len() > 0 {
+    let pos_pair = pos_pair_stack.pop().expect("Failed to pop an element of a vector.");
+    let (i, j) = pos_pair;
+    if j <= i {continue;}
+    let (long_i, long_j) = (i.to_usize().unwrap(), j.to_usize().unwrap());
+    let mea = mea_mat[long_i][long_j];
+    if mea == mea_mat[long_i + 1][long_j] {
+      pos_pair_stack.push((i + T::one(), j));
+    } else if mea == mea_mat[long_i][long_j - 1] {
+      pos_pair_stack.push((i, j - T::one()));
+    } else if mea == mea_mat[long_i + 1][long_j - 1] + gamma_plus_1 * mix_bpp_mat[long_i][long_j] - 1. {
+      pos_pair_stack.push((i + T::one(), j - T::one()));
+      mea_css.bpa_pos_pairs.push(pos_pair);
+    } else {
+      for k in range(i, j) {
+        let long_k = k.to_usize().unwrap();
+        if mea == mea_mat[long_i][long_k] + mea_mat[long_k + 1][long_j] {
+          pos_pair_stack.push((i, k));
+          pos_pair_stack.push((k + T::one(), j));
+          break;
+        }
+      }
+    }
+  }
+  mea_css.ea = mea_mat[0][sa_len.to_usize().unwrap() - 1];
+  mea_css
 }

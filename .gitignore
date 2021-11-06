@@ -1,7 +1,6 @@
 *
 !**/
 target
-!trna.fa
 !*.rs
 !*.py
 !*.tar.bz2
