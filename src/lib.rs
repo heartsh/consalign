@@ -51,7 +51,6 @@ pub const GAP: Char = '-' as Char;
 
 pub fn consalign<T>(
   fasta_records: &FastaRecords,
-  gamma: Prob,
   align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>,
 ) -> MeaSeqAlign<T>
 where
@@ -68,7 +67,7 @@ where
     for j in i + 1 .. num_of_rnas {
       let ref seq_2 = fasta_records[j].seq;
       let converted_seq_2 = convert_seq(seq_2, j);
-      let pair_seq_align = get_mea_align(&(&converted_seq, &converted_seq_2), align_prob_mat_pairs_with_rna_id_pairs, gamma);
+      let pair_seq_align = get_mea_align(&(&converted_seq, &converted_seq_2), align_prob_mat_pairs_with_rna_id_pairs);
       mea_mat.insert((i, j), pair_seq_align.ea);
     }
     let node_index = progressive_tree.add_node(i);
@@ -76,7 +75,7 @@ where
     node_indexes.insert(i, node_index);
   }
   let mut new_cluster_id = num_of_rnas;
-  while mea_mat.len() > 1 {
+  while mea_mat.len() > 0 {
     let mut max = NEG_INFINITY;
     let mut argmax = (0, 0);
     for (cluster_id_pair, &ea) in &mea_mat {
@@ -115,7 +114,7 @@ where
     new_cluster_id += 1;
   }
   let root = node_indexes[&(new_cluster_id - 1)];
-  let mut mea_seq_align = recursive_mea_seq_align(&progressive_tree, root, align_prob_mat_pairs_with_rna_id_pairs, &fasta_records, gamma);
+  let mut mea_seq_align = recursive_mea_seq_align(&progressive_tree, root, align_prob_mat_pairs_with_rna_id_pairs, &fasta_records);
   for col in mea_seq_align.cols.iter_mut() {
     let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
     pairs.sort_by_key(|x| x.1);
@@ -130,7 +129,7 @@ where
   mea_seq_align
 }
 
-pub fn recursive_mea_seq_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, fasta_records: &FastaRecords, gamma: Prob) -> MeaSeqAlign<T>
+pub fn recursive_mea_seq_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, fasta_records: &FastaRecords) -> MeaSeqAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -142,10 +141,10 @@ where
   } else {
     let mut neighbors = progressive_tree.neighbors_directed(node, Outgoing).detach();
     let child = neighbors.next_node(progressive_tree).unwrap();
-    let child_mea_seq_align = recursive_mea_seq_align(progressive_tree, child, align_prob_mat_pairs_with_rna_id_pairs, fasta_records, gamma);
+    let child_mea_seq_align = recursive_mea_seq_align(progressive_tree, child, align_prob_mat_pairs_with_rna_id_pairs, fasta_records);
     let child_2 = neighbors.next_node(progressive_tree).unwrap();
-    let child_mea_seq_align_2 = recursive_mea_seq_align(progressive_tree, child_2, align_prob_mat_pairs_with_rna_id_pairs, fasta_records, gamma);
-    get_mea_align(&(&child_mea_seq_align, &child_mea_seq_align_2), align_prob_mat_pairs_with_rna_id_pairs, gamma)
+    let child_mea_seq_align_2 = recursive_mea_seq_align(progressive_tree, child_2, align_prob_mat_pairs_with_rna_id_pairs, fasta_records);
+    get_mea_align(&(&child_mea_seq_align, &child_mea_seq_align_2), align_prob_mat_pairs_with_rna_id_pairs)
   }
 }
 
@@ -161,11 +160,10 @@ where
   converted_seq
 }
 
-pub fn get_mea_align<'a, T>(seq_align_pair: &MeaSeqAlignPair<'a, T>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, gamma: Prob) -> MeaSeqAlign<T>
+pub fn get_mea_align<'a, T>(seq_align_pair: &MeaSeqAlignPair<'a, T>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>) -> MeaSeqAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
-  let gamma_plus_1 = gamma + 1.;
   let seq_align_len_pair = (seq_align_pair.0.cols.len(), seq_align_pair.1.cols.len());
   let mut mea_mat = vec![vec![0.; seq_align_len_pair.1 + 1]; seq_align_len_pair.0 + 1];
   let mut align_prob_mat_avg = mea_mat.clone();
@@ -185,7 +183,7 @@ where
           for (&rna_id_2, &pos_2) in rna_ids_2.iter().zip(pos_maps_2.iter()) {
             let ordered_rna_id_pair = if rna_id < rna_id_2 {(rna_id, rna_id_2)} else {(rna_id_2, rna_id)};
             let ref align_prob_mat = align_prob_mat_pairs_with_rna_id_pairs[&ordered_rna_id_pair].align_prob_mat;
-            let pos_pair = (pos, pos_2);
+            let pos_pair = if rna_id < rna_id_2 {(pos, pos_2)} else {(pos_2, pos)};
             match align_prob_mat.get(&pos_pair) {
               Some(&align_prob) => {
                 align_prob_sum += align_prob;
@@ -196,7 +194,7 @@ where
         }
         let align_prob_avg = if count > 0 {align_prob_sum / count as Prob} else {0.};
         align_prob_mat_avg[i][j] = align_prob_avg;
-        let ea = mea_mat[i - 1][j - 1] + gamma_plus_1 * align_prob_avg - 1.;
+        let ea = mea_mat[i - 1][j - 1] + align_prob_avg;
         if ea > mea {
           mea = ea;
         }
@@ -229,7 +227,7 @@ where
     mea = mea_mat[i][j];
     if i > 0 && j > 0 {
       let align_prob_avg = align_prob_mat_avg[i][j];
-      let ea = mea_mat[i - 1][j - 1] + gamma_plus_1 * align_prob_avg - 1.;
+      let ea = mea_mat[i - 1][j - 1] + align_prob_avg;
       if ea == mea {
         let mut new_col = seq_align_pair.0.cols[i - 1].clone();
         let mut col_append = seq_align_pair.1.cols[j - 1].clone();

@@ -12,14 +12,15 @@ use std::fs::remove_file;
 
 type MeaCssStr = MeaSsStr;
 
-const MIN_POW_OF_2: i32 = 0;
+const MIN_POW_OF_2: i32 = -4;
 const MAX_POW_OF_2: i32 = 10;
-const MIN_POW_OF_2_CSS: i32 = -4;
+const MIN_POW_OF_2_CSS: i32 = MIN_POW_OF_2;
 const MAX_POW_OF_2_CSS: i32 = MAX_POW_OF_2;
 const DEFAULT_GAMMA: Prob = NEG_INFINITY;
-const DEFAULT_GAMMA_2: Prob = DEFAULT_GAMMA;
 const DEFAULT_MIX_WEIGHT_2: Prob = 0.5;
+const DEFAULT_MIN_BPP: Prob = 0.01;
 const README_CONTENTS_2: &str = "# gamma=x.sth\nThis file type contains a predicted consensus secondary structure in Stockholm format, and this predicted consensus structure is under the prediction accuracy control parameter \"x.\"\n\n";
+const MAX_SEQ_LEN_OFFSET: usize = 40;
 
 fn main() {
   let args = env::args().collect::<Args>();
@@ -55,8 +56,7 @@ fn main() {
     ),
     "UINT",
   );
-  opts.optopt("g", "gamma", "A specific gamma parameter rather than a range of gamma parameters (for RNA sequence alignment prediction)", "FLOAT");
-  opts.optopt("f", "gamma_2", "A specific gamma parameter rather than a range of gamma parameters (for consensus secondary structure prediction)", "FLOAT");
+  opts.optopt("g", "gamma", "A specific gamma parameter rather than a range of gamma parameters (for consensus secondary structure prediction)", "FLOAT");
   opts.optopt("", "mix_weight", &format!("A mixture weight for three-way probabilistic consistency (Uses {} by default)", DEFAULT_MIX_WEIGHT), "FLOAT");
   opts.optopt("", "mix_weight_2", &format!("A mixture weight for consensus secondary structure prediction (Uses {} by default)", DEFAULT_MIX_WEIGHT_2), "FLOAT");
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
@@ -103,11 +103,6 @@ fn main() {
   } else {
     DEFAULT_GAMMA
   };
-  let gamma_2 = if matches.opt_present("gamma_2") {
-    matches.opt_str("gamma_2").unwrap().parse().unwrap()
-  } else {
-    DEFAULT_GAMMA_2
-  };
   let num_of_threads = if matches.opt_present("t") {
     matches.opt_str("t").unwrap().parse().unwrap()
   } else {
@@ -142,14 +137,14 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  if max_seq_len <= u8::MAX as usize {
-    multi_threaded_consalign::<u8>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, gamma, gamma_2, outputs_probs, mix_weight, mix_weight_2, input_file_path);
+  if max_seq_len + MAX_SEQ_LEN_OFFSET <= u8::MAX as usize {
+    multi_threaded_consalign::<u8>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, gamma, outputs_probs, mix_weight, mix_weight_2, input_file_path);
   } else {
-    multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, gamma, gamma_2, outputs_probs, mix_weight, mix_weight_2, input_file_path);
+    multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, gamma, outputs_probs, mix_weight, mix_weight_2, input_file_path);
   }
 }
 
-fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, offset_4_max_gap_num: usize, min_bpp: Prob, produces_struct_profs: bool, output_dir_path: &Path, gamma: Prob, gamma_2: Prob, outputs_probs: bool, mix_weight: Prob, mix_weight_2: Prob, input_file_path: &Path)
+fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, offset_4_max_gap_num: usize, min_bpp: Prob, produces_struct_profs: bool, output_dir_path: &Path, gamma: Prob, outputs_probs: bool, mix_weight: Prob, mix_weight_2: Prob, input_file_path: &Path)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
@@ -160,31 +155,19 @@ where
   if outputs_probs {
     write_prob_mat_sets::<T>(output_dir_path, &prob_mat_sets, produces_struct_profs, &align_prob_mat_pairs_with_rna_id_pairs, true);
   }
-  if gamma != NEG_INFINITY {
-    compute_and_write_mea_sta(gamma, gamma_2, &output_dir_path, &fasta_records, &align_prob_mat_pairs_with_rna_id_pairs, mix_weight_2, &prob_mat_sets, &input_file_path);
-  } else {
-    thread_pool.scoped(|scope| {
-      for pow_of_2 in MIN_POW_OF_2 .. MAX_POW_OF_2 + 1 {
-        let gamma = (2. as Prob).powi(pow_of_2);
-        let ref ref_2_align_prob_mat_pairs_with_rna_id_pairs = align_prob_mat_pairs_with_rna_id_pairs;
-        let ref ref_2_prob_mat_sets = prob_mat_sets;
-        scope.execute(move || {
-          compute_and_write_mea_sta::<T>(gamma, gamma_2, output_dir_path, fasta_records, ref_2_align_prob_mat_pairs_with_rna_id_pairs, mix_weight_2, ref_2_prob_mat_sets, input_file_path);
-        });
-      }
-    });
-  }
+  compute_and_write_mea_sta(thread_pool, gamma, &output_dir_path, &fasta_records, &align_prob_mat_pairs_with_rna_id_pairs, mix_weight_2, &prob_mat_sets, &input_file_path);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn compute_and_write_mea_sta<T>(gamma: Prob, gamma_2: Prob, output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, mix_weight_2: Prob, prob_mat_sets: &ProbMatSets<T>, input_file_path: &Path)
+fn compute_and_write_mea_sta<T>(thread_pool: &mut Pool, gamma: Prob, output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, mix_weight_2: Prob, prob_mat_sets: &ProbMatSets<T>, input_file_path: &Path)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let sa = consalign::<T>(fasta_records, gamma, align_prob_mat_pairs_with_rna_id_pairs);
-  let sa_file_path = output_dir_path.join(&format!("gamma_{}.aln", gamma));
+  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs);
+  let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
+  let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
   let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
   let sa_len = sa.cols.len();
@@ -226,17 +209,23 @@ where
   let _ = remove_file(sa_file_path);
   let _ = remove_file(output_file_path);
   let mix_bpp_mat = get_mix_bpp_mat(prob_mat_sets, &rnaalifold_bpp_mat, &sa, mix_weight_2);
-  if gamma_2 != NEG_INFINITY {
-    let output_file_path = output_dir_path.join(&format!("gamma={}_gamma_2={}.sth", gamma, gamma_2));
-    let mea_css = consalifold::<T>(&mix_bpp_mat, gamma_2, &sa);
+  if gamma != NEG_INFINITY {
+    let output_file_path = output_dir_path.join(&format!("gamma={}.sth", gamma));
+    let mea_css = consalifold::<T>(&mix_bpp_mat, gamma, &sa);
     write_stockholm_file(&output_file_path, &sa, &mea_css, fasta_records);
   } else {
-    for pow_of_2 in MIN_POW_OF_2 .. MAX_POW_OF_2 + 1 {
-      let gamma_2 = (2. as Prob).powi(pow_of_2);
-      let output_file_path = output_dir_path.join(&format!("gamma={}_gamma_2={}.sth", gamma, gamma_2));
-      let mea_css = consalifold::<T>(&mix_bpp_mat, gamma_2, &sa);
-      write_stockholm_file(&output_file_path, &sa, &mea_css, fasta_records);
-    }
+    thread_pool.scoped(|scope| {
+      for pow_of_2 in MIN_POW_OF_2_CSS .. MAX_POW_OF_2_CSS + 1 {
+        let gamma = (2. as Prob).powi(pow_of_2);
+        let output_file_path = output_dir_path.join(&format!("gamma={}.sth", gamma));
+        let ref ref_2_mix_bpp_mat = mix_bpp_mat;
+        let ref ref_2_sa = sa;
+        scope.execute(move || {
+          let mea_css = consalifold::<T>(ref_2_mix_bpp_mat, gamma, ref_2_sa);
+          write_stockholm_file(&output_file_path, ref_2_sa, &mea_css, fasta_records);
+        });
+      }
+    });
   }
 }
 
