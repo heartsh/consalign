@@ -20,7 +20,7 @@ const DEFAULT_GAMMA: Prob = NEG_INFINITY;
 const DEFAULT_MIX_WEIGHT_2: Prob = 0.5;
 const DEFAULT_MIN_BPP: Prob = 0.01;
 const README_CONTENTS_2: &str = "# gamma=x.sth\nThis file type contains a predicted consensus secondary structure in Stockholm format, and this predicted consensus structure is under the prediction accuracy control parameter \"x.\"\n\n";
-const MAX_SEQ_LEN_OFFSET: usize = 40;
+const MAX_SEQ_LEN_OFFSET: usize = 50;
 
 fn main() {
   let args = env::args().collect::<Args>();
@@ -155,17 +155,17 @@ where
   if outputs_probs {
     write_prob_mat_sets::<T>(output_dir_path, &prob_mat_sets, produces_struct_profs, &align_prob_mat_pairs_with_rna_id_pairs, true);
   }
-  compute_and_write_mea_sta(thread_pool, gamma, &output_dir_path, &fasta_records, &align_prob_mat_pairs_with_rna_id_pairs, mix_weight_2, &prob_mat_sets, &input_file_path);
+  compute_and_write_mea_sta(thread_pool, gamma, &output_dir_path, &fasta_records, &align_prob_mat_pairs_with_rna_id_pairs, mix_weight_2, &prob_mat_sets, &input_file_path, offset_4_max_gap_num, min_bpp);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn compute_and_write_mea_sta<T>(thread_pool: &mut Pool, gamma: Prob, output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, mix_weight_2: Prob, prob_mat_sets: &ProbMatSets<T>, input_file_path: &Path)
+fn compute_and_write_mea_sta<T>(thread_pool: &mut Pool, gamma: Prob, output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, mix_weight_2: Prob, prob_mat_sets: &ProbMatSets<T>, input_file_path: &Path, offset_4_max_gap_num: usize, min_bpp: Prob)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs);
+  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), prob_mat_sets, min_bpp);
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
   let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
