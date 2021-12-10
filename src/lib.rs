@@ -3,6 +3,8 @@ extern crate consprob;
 pub use consprob::*;
 pub use petgraph::{Graph, Directed, Outgoing};
 pub use petgraph::graph::{DefaultIx, NodeIndex};
+pub use rand::seq::SliceRandom;
+pub use rand::Rng;
 
 pub type Col = Vec<Base>;
 pub type Cols = Vec<Col>;
@@ -26,7 +28,6 @@ pub type NodeIndexes = HashMap<RnaId, NodeIndex<DefaultIx>>;
 pub type ColPairs<T> = HashSet<PosPair<T>>;
 pub type ColsWithCols<T> = HashMap<T, T>;
 pub type MeaMatsWithPosPairs<T> = HashMap<PosPair<T>, SparseProbMat<T>>;
-// pub type ColSetsWithCols<T> = HashMap<T, Poss<T>>;
 pub type ColSetsWithCols<T> = HashMap<T, PosProbSeq<T>>;
 pub type PosProbSeq<T> = Vec<(T, Prob)>;
 
@@ -44,7 +45,7 @@ impl<T> MeaCss<T> {
   }
 }
 
-impl<T> MeaSeqAlign<T> {
+impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display> MeaSeqAlign<T> {
   pub fn new() -> MeaSeqAlign<T> {
     MeaSeqAlign {
       cols: Cols::new(),
@@ -55,9 +56,89 @@ impl<T> MeaSeqAlign<T> {
       ea: 0.,
     }
   }
+
+  pub fn copy_subset(&mut self, mea_seq_align: &MeaSeqAlign<T>, indexes: &Vec<usize>, prob_mat_sets: &ProbMatSets<T>, min_bpp: Prob) {
+    let cols_len = mea_seq_align.cols.len();
+    let num_of_rnas = mea_seq_align.cols[0].len();
+    let col_gaps_only = vec![PSEUDO_BASE; num_of_rnas];
+    let mut cols_subset = Cols::new();
+    let mut pos_map_sets_subset = PosMapSets::new();
+    for i in 0 .. cols_len {
+      let ref col = mea_seq_align.cols[i];
+      if *col == col_gaps_only {
+        continue;
+      }
+      let ref pos_maps = mea_seq_align.pos_map_sets[i];
+      let mut col_subset = Col::new();
+      let mut pos_maps_subset = PosMaps::new();
+      for (j, &c) in col.iter().enumerate() {
+        let pos_map = pos_maps[j];
+        if indexes.contains(&j) {
+          col_subset.push(c);
+          pos_maps_subset.push(pos_map);
+        }
+      }
+      cols_subset.push(col_subset);
+      pos_map_sets_subset.push(pos_maps_subset);
+    }
+    self.cols = cols_subset.clone();
+    self.pos_map_sets = pos_map_sets_subset.clone();
+    let mut rna_ids_subset = RnaIds::new();
+    for (i, &r) in mea_seq_align.rna_ids.iter().enumerate() {
+      if indexes.contains(&i) {
+        rna_ids_subset.push(r);
+      }
+    }
+    self.rna_ids = rna_ids_subset;
+    self.set_right_bp_info(prob_mat_sets, min_bpp);
+    self.ea = 0.;
+  }
+
+  pub fn set_right_bp_info(&mut self, prob_mat_sets: &ProbMatSets<T>, min_bpp: Prob) {
+    let sa_len = self.cols.len();
+    for i in 0 .. sa_len {
+      let ref pos_maps = self.pos_map_sets[i];
+      for j in i + 1 .. sa_len {
+        let ref pos_maps_2 = self.pos_map_sets[j];
+        let pos_map_pairs: Vec<(T, T)> = pos_maps.iter().zip(pos_maps_2.iter()).map(|(&x, &y)| (x, y)).collect();
+        let mut bpp_sum = 0.;
+        let mut count = 0;
+        for (pos_map_pair, &rna_id) in pos_map_pairs.iter().zip(self.rna_ids.iter()) {
+          let ref bpp_mat = prob_mat_sets[rna_id].bpp_mat;
+          match bpp_mat.get(pos_map_pair) {
+            Some(&bpp) => {
+              bpp_sum += bpp;
+              count += 1;
+            }, None => {},
+          }
+        }
+        let bpp_avg = if count > 0 {bpp_sum / count as Prob} else {0.};
+        if bpp_avg >= min_bpp {
+          let (i, j) = (T::from_usize(i).unwrap() + T::one(), T::from_usize(j).unwrap() + T::one());
+          match self.right_bp_col_sets_with_cols.get_mut(&i) {
+            Some(right_bp_cols) => {
+              right_bp_cols.push((j, bpp_avg));
+            }, None => {
+              let mut right_bp_cols = PosProbSeq::<T>::new();
+              right_bp_cols.push((j, bpp_avg));
+              self.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
+            },
+          }
+        }
+      }
+      let i = T::from_usize(i).unwrap() + T::one();
+      match self.right_bp_col_sets_with_cols.get(&i) {
+        Some(right_bp_cols) => {
+          let max = right_bp_cols.iter().map(|x| x.0).max().unwrap();
+          self.rightmost_bp_cols_with_cols.insert(i, max);
+        }, None => {},
+      }
+    }
+  }
 }
 
 pub const GAP: Char = '-' as Char;
+pub const MAX_ITER_REFINE: usize = 100;
 
 pub fn consalign<T>(
   fasta_records: &FastaRecords,
@@ -130,6 +211,9 @@ where
   }
   let root = node_indexes[&(new_cluster_id - 1)];
   let mut mea_seq_align = recursive_mea_seq_align(&progressive_tree, root, align_prob_mat_pairs_with_rna_id_pairs, &fasta_records, offset_4_max_gap_num, prob_mat_sets, min_bpp);
+  for i in 0 .. MAX_ITER_REFINE {
+    iter_refine_seq_align(&mut mea_seq_align, align_prob_mat_pairs_with_rna_id_pairs, offset_4_max_gap_num, prob_mat_sets, min_bpp);
+  }
   for col in mea_seq_align.cols.iter_mut() {
     let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
     pairs.sort_by_key(|x| x.1.clone());
@@ -142,6 +226,25 @@ where
   }
   mea_seq_align.rna_ids.sort();
   mea_seq_align
+}
+
+pub fn iter_refine_seq_align<T>(mea_seq_align: &mut MeaSeqAlign<T>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, offset_4_max_gap_num: T, prob_mat_sets: &ProbMatSets<T>, min_bpp: Prob)
+where
+  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+{
+  let mut indexes: Vec<usize> = (0 .. mea_seq_align.rna_ids.len()).collect();
+  let indexes_len = indexes.len();
+  let mut rng = rand::thread_rng();
+  indexes.shuffle(&mut rng);
+  let split_at = rng.gen_range(1 .. indexes_len);
+  let indexes_remain = indexes.split_off(split_at);
+  let mut split_pair = (MeaSeqAlign::<T>::new(), MeaSeqAlign::<T>::new());
+  split_pair.0.copy_subset(mea_seq_align, &indexes, prob_mat_sets, min_bpp);
+  split_pair.1.copy_subset(mea_seq_align, &indexes_remain, prob_mat_sets, min_bpp);
+  let tmp_align = get_mea_align(&(&split_pair.0, &split_pair.1), align_prob_mat_pairs_with_rna_id_pairs, offset_4_max_gap_num, prob_mat_sets, min_bpp);
+  if tmp_align.ea > mea_seq_align.ea {
+    *mea_seq_align = tmp_align;
+  }
 }
 
 pub fn recursive_mea_seq_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, fasta_records: &FastaRecords, offset_4_max_gap_num: T, prob_mat_sets: &ProbMatSets<T>, min_bpp: Prob) -> MeaSeqAlign<T>
@@ -233,7 +336,6 @@ where
       for (&rna_id, &pos) in rna_ids.iter().zip(pos_maps.iter()) {
         for (&rna_id_2, &pos_2) in rna_ids_2.iter().zip(pos_maps_2.iter()) {
           let ordered_rna_id_pair = if rna_id < rna_id_2 {(rna_id, rna_id_2)} else {(rna_id_2, rna_id)};
-          // let ref loop_align_prob_mat = align_prob_mat_pairs_with_rna_id_pairs[&ordered_rna_id_pair].loop_align_prob_mat;
           let ref align_prob_mat = align_prob_mat_pairs_with_rna_id_pairs[&ordered_rna_id_pair].align_prob_mat;
           let pos_pair = if rna_id < rna_id_2 {(pos, pos_2)} else {(pos_2, pos)};
           match align_prob_mat.get(&pos_pair) {
@@ -275,45 +377,7 @@ where
   new_rna_ids.append(&mut rna_ids_append);
   new_mea_seq_align.rna_ids = new_rna_ids;
   traceback(&mut new_mea_seq_align, seq_align_pair, max_gap_num, max_gap_num_4_il, &pseudo_col_quadruple, &pseudo_col_quadruple, &mea_mats_with_col_pairs, 0, &align_prob_mat_avg);
-  let sa_len = new_mea_seq_align.cols.len();
-  for i in 0 .. sa_len {
-    let ref pos_maps = new_mea_seq_align.pos_map_sets[i];
-    for j in i + 1 .. sa_len {
-      let ref pos_maps_2 = new_mea_seq_align.pos_map_sets[j];
-      let pos_map_pairs: Vec<(T, T)> = pos_maps.iter().zip(pos_maps_2.iter()).map(|(&x, &y)| (x, y)).collect();
-      let mut bpp_sum = 0.;
-      let mut count = 0;
-      for (pos_map_pair, &rna_id) in pos_map_pairs.iter().zip(new_mea_seq_align.rna_ids.iter()) {
-        let ref bpp_mat = prob_mat_sets[rna_id].bpp_mat;
-        match bpp_mat.get(pos_map_pair) {
-          Some(&bpp) => {
-            bpp_sum += bpp;
-            count += 1;
-          }, None => {},
-        }
-      }
-      let bpp_avg = if count > 0 {bpp_sum / count as Prob} else {0.};
-      if bpp_avg >= min_bpp {
-        let (i, j) = (T::from_usize(i).unwrap() + T::one(), T::from_usize(j).unwrap() + T::one());
-        match new_mea_seq_align.right_bp_col_sets_with_cols.get_mut(&i) {
-          Some(right_bp_cols) => {
-            right_bp_cols.push((j, bpp_avg));
-          }, None => {
-            let mut right_bp_cols = PosProbSeq::<T>::new();
-            right_bp_cols.push((j, bpp_avg));
-            new_mea_seq_align.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
-          },
-        }
-      }
-    }
-    let i = T::from_usize(i).unwrap() + T::one();
-    match new_mea_seq_align.right_bp_col_sets_with_cols.get(&i) {
-      Some(right_bp_cols) => {
-        let max = right_bp_cols.iter().map(|x| x.0).max().unwrap();
-        new_mea_seq_align.rightmost_bp_cols_with_cols.insert(i, max);
-      }, None => {},
-    }
-  }
+  new_mea_seq_align.set_right_bp_info(prob_mat_sets, min_bpp);
   new_mea_seq_align
 }
 
@@ -504,13 +568,10 @@ where
   let ref right_bp_cols_2 = seq_align_pair.1.right_bp_col_sets_with_cols[&k];
   let align_prob_avg_left = align_prob_mat_avg[&col_pair_left];
   for &(j, bpp_avg) in right_bp_cols.iter() {
-    // let long_j = j.to_usize().unwrap();
-    // let pos_map_pairs: Vec<(T, T)> = pos_map_sets[long_i - 1].iter().zip(pos_map_sets[long_j - 1].iter()).map(|(&x, &y)| (x, y)).collect();
     for &(l, bpp_avg_2) in right_bp_cols_2.iter() {
       let col_pair_right = (j, l);
       if !is_min_gap_ok(&col_pair_right, &pseudo_col_quadruple, max_gap_num_4_il) {continue;}
       let align_prob_avg_right = align_prob_mat_avg[&col_pair_right];
-      // let long_l = l.to_usize().unwrap();
       let basepair_align_prob_avg = bpp_avg + bpp_avg_2 + align_prob_avg_left + align_prob_avg_right;
       let mea_4_bpa = basepair_align_prob_avg + mea_mat[&(j - T::one(), l - T::one())];
       match mea_mats_with_col_pairs.get_mut(&col_pair_right) {
