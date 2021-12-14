@@ -1,5 +1,6 @@
 extern crate consprob;
 extern crate consalign;
+extern crate crossbeam;
 
 use consalign::*;
 use std::env;
@@ -165,7 +166,8 @@ fn compute_and_write_mea_sta<T>(thread_pool: &mut Pool, gamma: Prob, output_dir_
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), prob_mat_sets, min_bpp);
+  let feature_score_sets = FeatureCountSetsPosterior::load_trained_score_params();
+  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), prob_mat_sets, min_bpp, &feature_score_sets);
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
   let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());

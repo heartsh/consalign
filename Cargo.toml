@@ -1,7 +1,7 @@
 [package]
 name = "consalign"
 version = "0.1.0"
-edition = "2018"
+# edition = "2018"
 authors = ["heartsh <heartsh@heartsh.io>"]
 description = "Structural Alignment-aware Prediction Tool for RNAs"
 repository = "https://github.com/heartsh/consalign"
@@ -18,3 +18,7 @@ crossbeam = "0.8"
 consprob = {path = "../consprob-trained"}
 petgraph = "0.6"
 rand = "0.8"
+
+[lib]
+path = "src/lib.rs"
+name = "consalign"
