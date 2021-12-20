@@ -21,7 +21,7 @@ const DEFAULT_GAMMA: Prob = NEG_INFINITY;
 const DEFAULT_MIX_WEIGHT_2: Prob = 0.5;
 const DEFAULT_MIN_BPP: Prob = 0.01;
 const README_CONTENTS_2: &str = "# gamma=x.sth\nThis file type contains a predicted consensus secondary structure in Stockholm format, and this predicted consensus structure is under the prediction accuracy control parameter \"x.\"\n\n";
-const MAX_SEQ_LEN_OFFSET: usize = 50;
+const MAX_SEQ_LEN_OFFSET: usize = 100;
 
 fn main() {
   let args = env::args().collect::<Args>();
@@ -167,9 +167,10 @@ where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let feature_score_sets = FeatureCountSetsPosterior::load_trained_score_params();
-  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), prob_mat_sets, min_bpp, &feature_score_sets);
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
   let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
+  // println!("{:?}", sa_file_path);
+  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), prob_mat_sets, min_bpp, &feature_score_sets, &sa_file_path);
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
   let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
   let sa_len = sa.cols.len();
