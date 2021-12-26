@@ -3,8 +3,6 @@ extern crate consalign;
 use consalign::*;
 use std::env;
 
-pub const DEFAULT_MIX_WEIGHT_TRAIN: Prob = DEFAULT_MIX_WEIGHT;
-
 fn main() {
   let args = env::args().collect::<Args>();
   let program_name = args[0].clone();
@@ -26,7 +24,7 @@ fn main() {
     "min_base_pair_prob",
     &format!(
       "A minimum base-pairing-probability (Uses {} by default)",
-      DEFAULT_MIN_BPP_4_TRAIN
+      DEFAULT_MIN_BPP_ALIGN
     ),
     "FLOAT",
   );
@@ -35,11 +33,11 @@ fn main() {
     "offset_4_max_gap_num",
     &format!(
       "An offset for maximum numbers of gaps (Uses {} by default)",
-      DEFAULT_OFFSET_4_MAX_GAP_NUM_TRAIN
+      DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN
     ),
     "UINT",
   );
-  opts.optopt("", "mix_weight", &format!("A mixture weight (Uses {} by default)", DEFAULT_MIX_WEIGHT_TRAIN), "FLOAT");
+  opts.optopt("", "mix_weight", &format!("A mixture weight (Uses {} by default)", DEFAULT_MIX_WEIGHT), "FLOAT");
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
   opts.optflag("h", "help", "Print a help menu");
   let matches = match opts.parse(&args[1..]) {
@@ -62,7 +60,7 @@ fn main() {
       .parse()
       .unwrap()
   } else {
-    DEFAULT_MIN_BPP_4_TRAIN
+    DEFAULT_MIN_BPP_ALIGN
   };
   let offset_4_max_gap_num = if matches.opt_present("offset_4_max_gap_num") {
     matches
@@ -71,12 +69,12 @@ fn main() {
       .parse()
       .unwrap()
   } else {
-    DEFAULT_OFFSET_4_MAX_GAP_NUM_TRAIN
+    DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN
   } as u16;
   let mix_weight = if matches.opt_present("mix_weight") {
     matches.opt_str("mix_weight").unwrap().parse().unwrap()
   } else {
-    DEFAULT_MIX_WEIGHT_TRAIN
+    DEFAULT_MIX_WEIGHT
   };
   let num_of_threads = if matches.opt_present("t") {
     matches.opt_str("t").unwrap().parse().unwrap()

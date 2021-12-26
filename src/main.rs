@@ -18,7 +18,6 @@ const MAX_POW_OF_2: i32 = 10;
 const MIN_POW_OF_2_CSS: i32 = MIN_POW_OF_2;
 const MAX_POW_OF_2_CSS: i32 = MAX_POW_OF_2;
 const DEFAULT_GAMMA: Prob = NEG_INFINITY;
-const DEFAULT_MIX_WEIGHT_2: Prob = 0.5;
 const DEFAULT_MIN_BPP: Prob = 0.01;
 const README_CONTENTS_2: &str = "# gamma=x.sth\nThis file type contains a predicted consensus secondary structure in Stockholm format, and this predicted consensus structure is under the prediction accuracy control parameter \"x.\"\n\n";
 const MAX_SEQ_LEN_OFFSET: usize = 100;
@@ -44,7 +43,7 @@ fn main() {
     "min_base_pair_prob",
     &format!(
       "A minimum base-pairing-probability (Uses {} by default)",
-      DEFAULT_MIN_BPP
+      DEFAULT_MIN_BPP_ALIGN
     ),
     "FLOAT",
   );
@@ -53,7 +52,7 @@ fn main() {
     "offset_4_max_gap_num",
     &format!(
       "An offset for maximum numbers of gaps (Uses {} by default)",
-      DEFAULT_OFFSET_4_MAX_GAP_NUM
+      DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN
     ),
     "UINT",
   );
@@ -88,7 +87,7 @@ fn main() {
       .parse()
       .unwrap()
   } else {
-    DEFAULT_MIN_BPP
+    DEFAULT_MIN_BPP_ALIGN
   };
   let offset_4_max_gap_num = if matches.opt_present("offset_4_max_gap_num") {
     matches
@@ -97,7 +96,7 @@ fn main() {
       .parse()
       .unwrap()
   } else {
-    DEFAULT_OFFSET_4_MAX_GAP_NUM
+    DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN
   };
   let gamma = if matches.opt_present("gamma") {
     matches.opt_str("gamma").unwrap().parse().unwrap()
@@ -156,20 +155,22 @@ where
   if outputs_probs {
     write_prob_mat_sets::<T>(output_dir_path, &prob_mat_sets, produces_struct_profs, &align_prob_mat_pairs_with_rna_id_pairs, true);
   }
-  compute_and_write_mea_sta(thread_pool, gamma, &output_dir_path, &fasta_records, &align_prob_mat_pairs_with_rna_id_pairs, mix_weight_2, &prob_mat_sets, &input_file_path, offset_4_max_gap_num, min_bpp);
+  let align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
+  let bpp_mats: SparseProbMats<T> = prob_mat_sets.iter().map(|x| x.bpp_mat.clone()).collect();
+  compute_and_write_mea_sta(thread_pool, gamma, &output_dir_path, &fasta_records, &align_prob_mats_with_rna_id_pairs, mix_weight_2, &bpp_mats, &input_file_path, offset_4_max_gap_num, min_bpp);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn compute_and_write_mea_sta<T>(thread_pool: &mut Pool, gamma: Prob, output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mat_pairs_with_rna_id_pairs: &AlignProbMatPairsWithRnaIdPairs<T>, mix_weight_2: Prob, prob_mat_sets: &ProbMatSets<T>, input_file_path: &Path, offset_4_max_gap_num: usize, min_bpp: Prob)
+fn compute_and_write_mea_sta<T>(thread_pool: &mut Pool, gamma: Prob, output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>, mix_weight_2: Prob, bpp_mats: &SparseProbMats<T>, input_file_path: &Path, offset_4_max_gap_num: usize, min_bpp: Prob)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let feature_score_sets = FeatureCountSetsPosterior::load_trained_score_params();
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
   let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
-  let sa = consalign::<T>(fasta_records, align_prob_mat_pairs_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), prob_mat_sets, min_bpp, &feature_score_sets, &sa_file_path);
+  let sa = consalign::<T>(fasta_records, align_prob_mats_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), bpp_mats, min_bpp, &feature_score_sets, &sa_file_path);
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
   let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
   let sa_len = sa.cols.len();
@@ -210,7 +211,7 @@ where
   }
   let _ = remove_file(sa_file_path);
   let _ = remove_file(output_file_path);
-  let mix_bpp_mat = get_mix_bpp_mat(prob_mat_sets, &rnaalifold_bpp_mat, &sa, mix_weight_2);
+  let mix_bpp_mat = get_mix_bpp_mat(bpp_mats, &rnaalifold_bpp_mat, &sa, mix_weight_2);
   if gamma != NEG_INFINITY {
     let output_file_path = output_dir_path.join(&format!("gamma={}.sth", gamma));
     let mea_css = consalifold::<T>(&mix_bpp_mat, gamma, &sa);
@@ -231,7 +232,7 @@ where
   }
 }
 
-fn get_mix_bpp_mat<T>(prob_mat_sets: &ProbMatSets<T>, rnaalifold_bpp_mat: &SparseProbMat<T>, sa: &MeaSeqAlign<T>, mix_weight: Prob) -> ProbMat
+fn get_mix_bpp_mat<T>(bpp_mats: &SparseProbMats<T>, rnaalifold_bpp_mat: &SparseProbMat<T>, sa: &MeaSeqAlign<T>, mix_weight: Prob) -> ProbMat
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
@@ -241,19 +242,17 @@ where
   for i in 0 .. sa_len {
     for j in i + 1 .. sa_len {
       let mut mean_bpp = 0.;
-      let mut effective_num_of_rnas = 0;
       for k in 0 .. num_of_rnas {
         if sa.cols[i][k] == PSEUDO_BASE || sa.cols[j][k] == PSEUDO_BASE {continue;}
-        let ref bpp_mat = prob_mat_sets[k].bpp_mat;
+        let ref bpp_mat = bpp_mats[k];
         let pos_pair = (sa.pos_map_sets[i][k], sa.pos_map_sets[j][k]);
         match bpp_mat.get(&pos_pair) {
           Some(&bpp) => {
             mean_bpp += bpp;
-            effective_num_of_rnas += 1;
           }, None => {},
         }
       }
-      mix_bpp_mat[i][j] = if effective_num_of_rnas > 0 {mix_weight * mean_bpp / effective_num_of_rnas as Prob} else {0.};
+      mix_bpp_mat[i][j] = mix_weight * mean_bpp / num_of_rnas as Prob;
       let pos_pair = (T::from_usize(i).unwrap(), T::from_usize(j).unwrap());
       match rnaalifold_bpp_mat.get(&pos_pair) {
         Some(&rnaalifold_bpp) => {
