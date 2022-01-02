@@ -32,6 +32,7 @@ pub struct MeaSeqAlign<T> {
   pub rna_ids: RnaIds,
   pub ea: Mea,
   pub bp_col_pairs: SparsePosMat<T>,
+  pub mix_bpp_mat: SparseProbMat<T>,
   pub align_probs_avg: Probs,
 }
 #[derive(Clone)]
@@ -52,7 +53,7 @@ pub type ColPairs<T> = HashSet<PosPair<T>>;
 pub type ColsWithCols<T> = HashMap<T, T>;
 pub type MeaMatsWithPosPairs<T> = HashMap<PosPair<T>, SparseProbMat<T>>;
 pub type ColSetsWithCols<T> = HashMap<T, PosProbSeq<T>>;
-pub type PosProbSeq<T> = Vec<(T, Prob, Prob)>;
+pub type PosProbSeq<T> = Vec<(T, Prob)>;
 #[derive(Clone)]
 pub struct TrainDatumPosterior<T> {
   pub fasta_records: FastaRecords,
@@ -71,20 +72,6 @@ pub struct FeatureCountSetsPosterior {
 pub type Accs = Vec<(FeatureCountSetsPosterior, Prob)>;
 pub type SparseProbMats<T> = Vec<SparseProbMat<T>>;
 pub type ProbMatsWithRnaIdPairs<T> = HashMap<RnaIdPair, SparseProbMat<T>>;
-
-pub struct MeaCss<T> {
-  pub bpa_pos_pairs: PosPairs<T>,
-  pub ea: Mea,
-}
-
-impl<T> MeaCss<T> {
-  pub fn new() -> MeaCss<T> {
-    MeaCss {
-      bpa_pos_pairs: PosPairs::<T>::new(),
-      ea: 0.,
-    }
-  }
-}
 
 impl<T: Hash + Clone + Unsigned + PrimInt + FromPrimitive + Integer + Ord + Sync + Send + Display> TrainDatumPosterior<T> {
   pub fn origin() -> TrainDatumPosterior<T> {
@@ -135,6 +122,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       rna_ids: RnaIds::new(),
       ea: 0.,
       bp_col_pairs: SparsePosMat::<T>::default(),
+      mix_bpp_mat: SparseProbMat::<T>::default(),
       align_probs_avg: Probs::new(),
     }
   }
@@ -172,11 +160,11 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       }
     }
     self.rna_ids = rna_ids_subset;
-    self.set_right_bp_info(bpp_mats, min_bpp, feature_score_sets, sa_file_path, fasta_records, true);
+    self.set_right_bp_info(bpp_mats, min_bpp, feature_score_sets, sa_file_path, fasta_records, true, false);
     self.set_align_probs_avg(align_prob_mats_with_rna_id_pairs);
   }
 
-  pub fn set_right_bp_info(&mut self, bpp_mats: &SparseProbMats<T>, min_bpp: Prob, feature_score_sets: &FeatureCountSetsPosterior, sa_file_path: &Path, fasta_records: &FastaRecords, uses_rnaalifold_bpps: bool) {
+  pub fn set_right_bp_info(&mut self, bpp_mats: &SparseProbMats<T>, min_bpp: Prob, feature_score_sets: &FeatureCountSetsPosterior, sa_file_path: &Path, fasta_records: &FastaRecords, uses_rnaalifold_bpps: bool, plans_alifold: bool) {
     let rnaalifold_bpp_mat = if uses_rnaalifold_bpps {get_rnaalifold_bpp_mat(self, sa_file_path, fasta_records)} else {SparseProbMat::<T>::default()};
     let sa_len = self.cols.len();
     let num_of_rnas = self.rna_ids.len();
@@ -204,26 +192,38 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
             }, None => {},
           }
         }
-        let bpp_avg = bpp_sum / num_of_rnas as Prob;
-        if bpp_avg >= min_bpp {
-          let (i, j) = (T::from_usize(i).unwrap() + T::one(), T::from_usize(j).unwrap() + T::one());
-          match self.right_bp_col_sets_with_cols.get_mut(&i) {
-            Some(right_bp_cols) => {
-              right_bp_cols.push((j, bpp_sum, rnaalifold_bpp));
-            }, None => {
-              let mut right_bp_cols = PosProbSeq::<T>::new();
-              right_bp_cols.push((j, bpp_sum, rnaalifold_bpp));
-              self.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
-            },
+        let mut bpp_avg = bpp_sum / num_of_rnas as Prob;
+        if rnaalifold_bpp > NEG_INFINITY {
+          bpp_avg = (bpp_avg + rnaalifold_bpp) / 2.;
+        }
+        let product = feature_score_sets.basepair_count_posterior * bpp_avg;
+        if product >= 1. {
+          let weight = product - 1.;
+          if plans_alifold {
+            let pos_pair = (T::from_usize(i).unwrap(), T::from_usize(j).unwrap());
+            self.mix_bpp_mat.insert(pos_pair, weight);
+          } else {
+            let (i, j) = (T::from_usize(i).unwrap() + T::one(), T::from_usize(j).unwrap() + T::one());
+            match self.right_bp_col_sets_with_cols.get_mut(&i) {
+              Some(right_bp_cols) => {
+                right_bp_cols.push((j, weight));
+              }, None => {
+                let mut right_bp_cols = PosProbSeq::<T>::new();
+                right_bp_cols.push((j, weight));
+                self.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
+              },
+            }
           }
         }
       }
-      let i = T::from_usize(i).unwrap() + T::one();
-      match self.right_bp_col_sets_with_cols.get(&i) {
-        Some(right_bp_cols) => {
-          let max = right_bp_cols.iter().map(|x| x.0).max().unwrap();
-          self.rightmost_bp_cols_with_cols.insert(i, max);
-        }, None => {},
+      if !plans_alifold {
+        let i = T::from_usize(i).unwrap() + T::one();
+        match self.right_bp_col_sets_with_cols.get(&i) {
+          Some(right_bp_cols) => {
+            let max = right_bp_cols.iter().map(|x| x.0).max().unwrap();
+            self.rightmost_bp_cols_with_cols.insert(i, max);
+          }, None => {},
+        }
       }
     }
   }
@@ -252,6 +252,12 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       }
       self.align_probs_avg.push(align_prob_sum);
     }
+  }
+
+  pub fn set_ea(&mut self, gamma: Prob) {
+    let num_of_rnas = self.rna_ids.len();
+    let denom = (num_of_rnas * (num_of_rnas - 1) / 2) as Prob;
+    self.ea += self.align_probs_avg.iter().map(|&x| (gamma * x / denom - 1.).max(0.)).sum::<Mea>();
   }
 }
 
@@ -285,7 +291,8 @@ pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str = "../src
 // pub const MIN_LOG_GAMMA_BASEPAIR: i32 = -4;
 pub const MIN_LOG_GAMMA_BASEPAIR: i32 = 0;
 pub const MIN_LOG_GAMMA_ALIGN: i32 = MIN_LOG_GAMMA_BASEPAIR;
-pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 10;
+// pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 10;
+pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 5;
 pub const MAX_LOG_GAMMA_ALIGN: i32 = MAX_LOG_GAMMA_BASEPAIR;
 pub const BRACKET_PAIRS: [(char, char); 9] = [('(', ')'), ('<', '>'), ('{', '}'), ('[', ']'), ('A', 'a'), ('B', 'b'), ('C', 'c'), ('D', 'd'), ('E', 'e'), ];
 pub const DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN: usize = 4 * DEFAULT_OFFSET_4_MAX_GAP_NUM;
@@ -370,6 +377,9 @@ where
   for _ in 0 .. MAX_ITER_REFINE {
     iter_refine_seq_align(&mut mea_seq_align, align_prob_mats_with_rna_id_pairs, offset_4_max_gap_num, bpp_mats, min_bpp, &feature_score_sets, sa_file_path, fasta_records);
   }
+  mea_seq_align.set_right_bp_info(bpp_mats, min_bpp, feature_score_sets, sa_file_path, fasta_records, true, true);
+  consalifold(&mut mea_seq_align);
+  // mea_seq_align.set_ea(feature_score_sets.align_count_posterior);
   for col in mea_seq_align.cols.iter_mut() {
     let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
     pairs.sort_by_key(|x| x.1.clone());
@@ -399,6 +409,7 @@ where
   split_pair.1.copy_subset(mea_seq_align, &indexes_remain, bpp_mats, min_bpp, feature_score_sets, sa_file_path, fasta_records, align_prob_mats_with_rna_id_pairs);
   let tmp_align = get_mea_align(&(&split_pair.0, &split_pair.1), align_prob_mats_with_rna_id_pairs, offset_4_max_gap_num, bpp_mats, min_bpp, feature_score_sets);
   if tmp_align.ea > mea_seq_align.ea {
+    // println!("Update: {} -> {}", mea_seq_align.ea, tmp_align.ea);
     *mea_seq_align = tmp_align;
   }
 }
@@ -432,15 +443,20 @@ where
   converted_seq.cols = seq[1 .. seq_len - 1].iter().map(|&x| vec![x]).collect();
   converted_seq.pos_map_sets = (1 .. seq.len() - 1).map(|x| vec![T::from_usize(x).unwrap()]).collect();
   converted_seq.rna_ids = vec![rna_id];
-  converted_seq.align_probs_avg = vec![0.; seq_len - 2];
+  converted_seq.align_probs_avg = vec![1.; seq_len - 2];
   for (pos_pair, &bpp) in sparse_bpp_mat {
+    let product = feature_score_sets.basepair_count_posterior * bpp;
+    if product >= 1. {
+      continue;
+    }
     let (i, j) = *pos_pair;
+    let weight = product - 1.;
     match converted_seq.right_bp_col_sets_with_cols.get_mut(&i) {
       Some(right_bp_cols) => {
-        right_bp_cols.push((j, bpp, NEG_INFINITY));
+        right_bp_cols.push((j, weight));
       }, None => {
         let mut right_bp_cols = PosProbSeq::<T>::new();
-        right_bp_cols.push((j, bpp, NEG_INFINITY));
+        right_bp_cols.push((j, weight));
         converted_seq.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
       },
     }
@@ -460,10 +476,6 @@ where
   let max_gap_num = offset_4_max_gap_num
     + T::from_usize(max(seq_align_len_pair.0, seq_align_len_pair.1) - min(seq_align_len_pair.0, seq_align_len_pair.1))
       .unwrap();
-  /* let max_gap_num_4_il = max(
-    min(max_gap_num, T::from_usize(MAX_GAP_NUM_4_IL).unwrap()),
-    T::from_usize(MIN_GAP_NUM_4_IL).unwrap(),
-  ); */
   let max_gap_num_4_il = max(
     min(max_gap_num, T::from_usize(MAX_GAP_NUM_4_IL_ALIGN).unwrap()),
     T::from_usize(MIN_GAP_NUM_4_IL_ALIGN).unwrap(),
@@ -491,11 +503,15 @@ where
     let long_i = i.to_usize().unwrap();
     let ref pos_maps = pos_map_sets[long_i - 1];
     let align_prob_sum = seq_align_pair.0.align_probs_avg[long_i - 1];
+    // let gap_case_score = (feature_score_sets.align_count_posterior * align_prob_sum / denom - 1.).max(0.);
     for j in range_inclusive(T::one(), seq_align_len_pair.1) {
       let col_pair = (i, j);
       if !is_min_gap_ok(&col_pair, &pseudo_col_quadruple, max) {continue;}
       let long_j = j.to_usize().unwrap();
-      let mut align_prob_sum = align_prob_sum + seq_align_pair.1.align_probs_avg[long_j - 1];
+      // let mut align_prob_sum = align_prob_sum + seq_align_pair.1.align_probs_avg[long_j - 1];
+      let align_prob_sum_2 = seq_align_pair.1.align_probs_avg[long_j - 1];
+      // let gap_case_score_2 = (feature_score_sets.align_count_posterior * align_prob_sum_2 / denom - 1.).max(0.);
+      let mut align_prob_sum = align_prob_sum + align_prob_sum_2;
       let ref pos_maps_2 = pos_map_sets_2[long_j - 1];
       for (&rna_id, &pos) in rna_ids.iter().zip(pos_maps.iter()) {
         for (&rna_id_2, &pos_2) in rna_ids_2.iter().zip(pos_maps_2.iter()) {
@@ -509,8 +525,13 @@ where
           }
         }
       }
+      // let align_prob_avg = (feature_score_sets.align_count_posterior * align_prob_sum / denom - 1.).max(0.);
       let align_prob_avg = feature_score_sets.align_count_posterior * align_prob_sum / denom - 1.;
-      align_prob_mat_avg.insert(col_pair, align_prob_avg);
+      // let sum = gap_case_score + gap_case_score_2;
+      // if align_prob_avg >= sum {
+      if align_prob_avg >= 0. {
+        align_prob_mat_avg.insert(col_pair, align_prob_avg);
+      }
     }
   }
   let mut mea_mats_with_col_pairs = MeaMatsWithPosPairs::default();
@@ -520,6 +541,7 @@ where
         for k in range_inclusive(T::one(), seq_align_len_pair.1).rev() {
           let col_pair_left = (i, k);
           if !is_min_gap_ok(&col_pair_left, &pseudo_col_quadruple, max_gap_num_4_il) {continue;}
+          if !align_prob_mat_avg.contains_key(&col_pair_left) {continue;}
           match seq_align_pair.1.rightmost_bp_cols_with_cols.get(&k) {
             Some(&l) => {
               let col_quadruple = (i, j, k, l);
@@ -534,6 +556,8 @@ where
   let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, max_gap_num, max_gap_num_4_il, &pseudo_col_quadruple, &align_prob_mat_avg, &pseudo_col_quadruple, false, seq_align_pair, feature_score_sets);
   let mut new_mea_seq_align = MeaSeqAlign::new();
   new_mea_seq_align.ea = mea_mat[&(pseudo_col_quadruple.1 - T::one(), pseudo_col_quadruple.3 - T::one())];
+  new_mea_seq_align.ea += seq_align_pair.0.align_probs_avg.iter().map(|&x| (feature_score_sets.align_count_posterior * x / denom - 1.).max(0.)).sum::<Mea>();
+  new_mea_seq_align.ea += seq_align_pair.1.align_probs_avg.iter().map(|&x| (feature_score_sets.align_count_posterior * x / denom - 1.).max(0.)).sum::<Mea>();
   let mut new_rna_ids = seq_align_pair.0.rna_ids.clone();
   let mut rna_ids_append = seq_align_pair.1.rna_ids.clone();
   new_rna_ids.append(&mut rna_ids_append);
@@ -558,7 +582,7 @@ where
       }
     }
   }
-  new_mea_seq_align.set_right_bp_info(bpp_mats, min_bpp, feature_score_sets, &Path::new(""), &Vec::new(), false);
+  new_mea_seq_align.set_right_bp_info(bpp_mats, min_bpp, feature_score_sets, &Path::new(""), &Vec::new(), false, false);
   new_mea_seq_align.set_align_probs_avg(align_prob_mats_with_rna_id_pairs);
   new_mea_seq_align
 }
@@ -579,21 +603,25 @@ where
     mea = mea_mat[&col_pair];
     let (long_u, long_v) = (u.to_usize().unwrap(), v.to_usize().unwrap());
     if u > i && v > k {
-      let align_prob_avg = align_prob_mat_avg[&col_pair];
-      let col_pair_4_match = (u - T::one(), v - T::one());
-      let ea = mea_mat[&col_pair_4_match] + align_prob_avg;
-      if ea == mea {
-        let mut new_col = seq_align_pair.0.cols[long_u - 1].clone();
-        let mut col_append = seq_align_pair.1.cols[long_v - 1].clone();
-        new_col.append(&mut col_append);
-        new_mea_seq_align.cols.insert(offset, new_col);
-        let mut new_pos_map_sets = seq_align_pair.0.pos_map_sets[long_u - 1].clone();
-        let mut pos_map_sets_append = seq_align_pair.1.pos_map_sets[long_v - 1].clone();
-        new_pos_map_sets.append(&mut pos_map_sets_append);
-        new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets);
-        u = u - T::one();
-        v = v - T::one();
-        continue;
+      // let align_prob_avg = align_prob_mat_avg[&col_pair];
+      match align_prob_mat_avg.get(&col_pair) {
+        Some(&align_prob_avg) => {
+          let col_pair_4_match = (u - T::one(), v - T::one());
+          let ea = mea_mat[&col_pair_4_match] + align_prob_avg;
+          if ea == mea {
+            let mut new_col = seq_align_pair.0.cols[long_u - 1].clone();
+            let mut col_append = seq_align_pair.1.cols[long_v - 1].clone();
+            new_col.append(&mut col_append);
+            new_mea_seq_align.cols.insert(offset, new_col);
+            let mut new_pos_map_sets = seq_align_pair.0.pos_map_sets[long_u - 1].clone();
+            let mut pos_map_sets_append = seq_align_pair.1.pos_map_sets[long_v - 1].clone();
+            new_pos_map_sets.append(&mut pos_map_sets_append);
+            new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets);
+            u = u - T::one();
+            v = v - T::one();
+            continue;
+          }
+        }, None => {},
       }
       let mut is_basepair_match_found = false;
       match mea_mats_with_col_pairs.get(&col_pair) {
@@ -641,8 +669,8 @@ where
     if u > i {
       match mea_mat.get(&(u - T::one(), v)) {
         Some(&ea) => {
-          let align_prob_avg = feature_score_sets.align_count_posterior * seq_align_pair.0.align_probs_avg[long_u - 1] / denom - 1.;
-          let ea = ea + align_prob_avg;
+          let align_prob_avg = (feature_score_sets.align_count_posterior * seq_align_pair.0.align_probs_avg[long_u - 1] / denom - 1.).max(0.);
+          // let ea = ea + align_prob_avg;
           if ea == mea {
             let mut new_col = seq_align_pair.0.cols[long_u - 1].clone();
             let mut col_append = vec![PSEUDO_BASE; rna_num_pair.1];
@@ -661,8 +689,8 @@ where
     if v > k {
       match mea_mat.get(&(u, v - T::one())) {
         Some(&ea) => {
-          let align_prob_avg = feature_score_sets.align_count_posterior * seq_align_pair.1.align_probs_avg[long_v - 1] / denom - 1.;
-          let ea = ea + align_prob_avg;
+          let align_prob_avg = (feature_score_sets.align_count_posterior * seq_align_pair.1.align_probs_avg[long_v - 1] / denom - 1.).max(0.);
+          // let ea = ea + align_prob_avg;
           if ea == mea {
             let mut new_col = vec![PSEUDO_BASE; rna_num_pair.0];
             let mut col_append = seq_align_pair.1.cols[long_v - 1].clone();
@@ -691,7 +719,7 @@ where
   let denom = (num_of_rnas * (num_of_rnas - 1) / 2) as Prob;
   for u in range(i, j) {
     let long_u = u.to_usize().unwrap();
-    let align_prob_avg = if long_u == 0 {NEG_INFINITY} else {feature_score_sets.align_count_posterior * seq_align_pair.0.align_probs_avg[long_u - 1] / denom - 1.};
+    let align_prob_avg = if long_u == 0 {NEG_INFINITY} else {(feature_score_sets.align_count_posterior * seq_align_pair.0.align_probs_avg[long_u - 1] / denom - 1.).max(0.)};
     for v in range(k, l) {
       let col_pair = (u, v);
       if !is_min_gap_ok(&col_pair, pseudo_col_quadruple, if is_internal {max_gap_num_4_il} else {max_gap_num}) {continue;}
@@ -700,7 +728,7 @@ where
         continue;
       }
       let long_v = v.to_usize().unwrap();
-      let align_prob_avg_2 = if long_v == 0 {NEG_INFINITY} else {feature_score_sets.align_count_posterior * seq_align_pair.1.align_probs_avg[long_v - 1] / denom - 1.};
+      let align_prob_avg_2 = if long_v == 0 {NEG_INFINITY} else {(feature_score_sets.align_count_posterior * seq_align_pair.1.align_probs_avg[long_v - 1] / denom - 1.).max(0.)};
       let mut mea = NEG_INFINITY;
       match mea_mats_with_col_pairs.get(&col_pair) {
         Some(mea_mat_4_bpas) => {
@@ -719,19 +747,23 @@ where
         }, None => {},
       }
       let col_pair_4_match = (u - T::one(), v - T::one());
-      match mea_mat.get(&col_pair_4_match) {
-        Some(&ea) => {
-          let align_prob_avg = align_prob_mat_avg[&col_pair];
-          let ea = ea + align_prob_avg;
-          if ea > mea {
-            mea = ea;
+      match align_prob_mat_avg.get(&col_pair) {
+        Some(&align_prob_avg) => {
+          match mea_mat.get(&col_pair_4_match) {
+            Some(&ea) => {
+              // let align_prob_avg = align_prob_mat_avg[&col_pair];
+              let ea = ea + align_prob_avg;
+              if ea > mea {
+                mea = ea;
+              }
+            }, None => {},
           }
         }, None => {},
       }
       let col_pair_4_insert = (u - T::one(), v);
       match mea_mat.get(&col_pair_4_insert) {
         Some(&ea) => {
-          let ea = ea + align_prob_avg;
+          // let ea = ea + align_prob_avg;
           if ea > mea {
             mea = ea;
           }
@@ -740,7 +772,7 @@ where
       let col_pair_4_insert_2 = (u, v - T::one());
       match mea_mat.get(&col_pair_4_insert_2) {
         Some(&ea) => {
-          let ea = ea + align_prob_avg_2;
+          // let ea = ea + align_prob_avg_2;
           if ea > mea {
             mea = ea;
           }
@@ -760,19 +792,15 @@ where
   let ref right_bp_cols = seq_align_pair.0.right_bp_col_sets_with_cols[&i];
   let ref right_bp_cols_2 = seq_align_pair.1.right_bp_col_sets_with_cols[&k];
   let align_prob_avg_left = align_prob_mat_avg[&col_pair_left];
-  let rna_num_pair = (seq_align_pair.0.rna_ids.len(), seq_align_pair.1.rna_ids.len());
-  let denom = (rna_num_pair.0 + rna_num_pair.1) as Prob;
-  for &(j, bpp_avg, bpp_alifold) in right_bp_cols.iter() {
-    for &(l, bpp_avg_2, bpp_alifold_2) in right_bp_cols_2.iter() {
+  // let rna_num_pair = (seq_align_pair.0.rna_ids.len(), seq_align_pair.1.rna_ids.len());
+  // let denom = (rna_num_pair.0 + rna_num_pair.1) as Prob;
+  for &(j, weight) in right_bp_cols.iter() {
+    for &(l, weight_2) in right_bp_cols_2.iter() {
       let col_pair_right = (j, l);
       if !is_min_gap_ok(&col_pair_right, &pseudo_col_quadruple, max_gap_num_4_il) {continue;}
-      let mut mix_bpp = (bpp_avg + bpp_avg_2) / denom;
-      if bpp_alifold != NEG_INFINITY && bpp_alifold_2 != NEG_INFINITY {
-        mix_bpp = (mix_bpp + (bpp_alifold + bpp_alifold_2) / 2.) / 2.;
-      }
-      let mix_bpp = feature_score_sets.basepair_count_posterior * mix_bpp - 1.;
+      if !align_prob_mat_avg.contains_key(&col_pair_right) {continue;}
       let align_prob_avg_right = align_prob_mat_avg[&col_pair_right];
-      let basepair_align_prob_avg = mix_bpp + align_prob_avg_left + align_prob_avg_right;
+      let basepair_align_prob_avg = weight + weight_2 + align_prob_avg_left + align_prob_avg_right;
       let mea_4_bpa = basepair_align_prob_avg + mea_mat[&(j - T::one(), l - T::one())];
       match mea_mats_with_col_pairs.get_mut(&col_pair_right) {
         Some(mea_mat_4_bpas) => {
@@ -798,14 +826,14 @@ pub fn revert_char(c: Base) -> u8 {
   }
 }
 
-pub fn consalifold<T>(mix_bpp_mat: &ProbMat, gamma: Prob, sa: &MeaSeqAlign<T>) -> MeaCss<T>
+pub fn consalifold<T>(sa: &mut MeaSeqAlign<T>)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer,
 {
+  sa.bp_col_pairs = SparsePosMat::<T>::default();
   let sa_len = sa.cols.len();
   let mut mea_mat = vec![vec![0.; sa_len]; sa_len];
   let sa_len = T::from_usize(sa_len).unwrap();
-  let gamma_plus_1 = gamma + 1.;
   for sub_sa_len in range_inclusive(T::one(), sa_len) {
     for i in range_inclusive(T::zero(), sa_len - sub_sa_len) {
       let j = i + sub_sa_len - T::one();
@@ -818,9 +846,13 @@ where
       if ea > mea {
         mea = ea;
       }
-      let ea = mea_mat[long_i + 1][long_j - 1] + gamma_plus_1 * mix_bpp_mat[long_i][long_j] - 1.;
-      if ea > mea {
-        mea = ea;
+      match sa.mix_bpp_mat.get(&(i, j)) {
+        Some(&mix_bpp) => {
+          let ea = mea_mat[long_i + 1][long_j - 1] + mix_bpp;
+          if ea > mea {
+            mea = ea;
+          }
+        }, None => {},
       }
       for k in long_i .. long_j {
         let ea = mea_mat[long_i][k] + mea_mat[k + 1][long_j];
@@ -831,7 +863,6 @@ where
       mea_mat[long_i][long_j] = mea;
     }
   }
-  let mut mea_css = MeaCss::new();
   let mut pos_pair_stack = vec![(T::zero(), sa_len - T::one())];
   while pos_pair_stack.len() > 0 {
     let pos_pair = pos_pair_stack.pop().expect("Failed to pop an element of a vector.");
@@ -843,10 +874,16 @@ where
       pos_pair_stack.push((i + T::one(), j));
     } else if mea == mea_mat[long_i][long_j - 1] {
       pos_pair_stack.push((i, j - T::one()));
-    } else if mea == mea_mat[long_i + 1][long_j - 1] + gamma_plus_1 * mix_bpp_mat[long_i][long_j] - 1. {
-      pos_pair_stack.push((i + T::one(), j - T::one()));
-      mea_css.bpa_pos_pairs.push(pos_pair);
     } else {
+      match sa.mix_bpp_mat.get(&pos_pair) {
+        Some(&mix_bpp) => {
+          if mea == mea_mat[long_i + 1][long_j - 1] + mix_bpp {
+            pos_pair_stack.push((i + T::one(), j - T::one()));
+            sa.bp_col_pairs.insert(pos_pair);
+            continue;
+          }
+        }, None => {},
+      }
       for k in range(i, j) {
         let long_k = k.to_usize().unwrap();
         if mea == mea_mat[long_i][long_k] + mea_mat[long_k + 1][long_j] {
@@ -857,8 +894,7 @@ where
       }
     }
   }
-  mea_css.ea = mea_mat[0][sa_len.to_usize().unwrap() - 1];
-  mea_css
+  sa.ea = mea_mat[0][sa_len.to_usize().unwrap() - 1];
 }
 
 pub fn constrain_posterior<'a, T>(

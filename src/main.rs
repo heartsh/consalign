@@ -7,7 +7,7 @@ use std::env;
 use std::io::{BufRead, BufWriter};
 use std::fs::File;
 use std::fs::create_dir;
-use crossbeam::scope;
+// use crossbeam::scope;
 use std::process::{Command, Output};
 use std::fs::remove_file;
 
@@ -171,7 +171,7 @@ where
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
   let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
   let sa = consalign::<T>(fasta_records, align_prob_mats_with_rna_id_pairs, T::from_usize(offset_4_max_gap_num).unwrap(), bpp_mats, min_bpp, &feature_score_sets, &sa_file_path);
-  let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
+  /* let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
   let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
   let sa_len = sa.cols.len();
   let max_seq_id_len = fasta_records.iter().map(|fasta_record| {fasta_record.fasta_id.len()}).max().unwrap();
@@ -210,13 +210,14 @@ where
     rnaalifold_bpp_mat.insert((i, j), bpp);
   }
   let _ = remove_file(sa_file_path);
-  let _ = remove_file(output_file_path);
-  let mix_bpp_mat = get_mix_bpp_mat(bpp_mats, &rnaalifold_bpp_mat, &sa, mix_weight_2);
-  if gamma != NEG_INFINITY {
+  let _ = remove_file(output_file_path); */
+  // let mix_bpp_mat = get_mix_bpp_mat(bpp_mats, &rnaalifold_bpp_mat, &sa, mix_weight_2);
+  // if gamma != NEG_INFINITY {
     let output_file_path = output_dir_path.join(&format!("gamma={}.sth", gamma));
-    let mea_css = consalifold::<T>(&mix_bpp_mat, gamma, &sa);
-    write_stockholm_file(&output_file_path, &sa, &mea_css, fasta_records);
-  } else {
+    // let mea_css = consalifold::<T>(&mix_bpp_mat, gamma, &sa);
+    // write_stockholm_file(&output_file_path, &sa, &mea_css, fasta_records);
+    write_stockholm_file(&output_file_path, &sa, fasta_records);
+  /* } else {
     thread_pool.scoped(|scope| {
       for pow_of_2 in MIN_POW_OF_2_CSS .. MAX_POW_OF_2_CSS + 1 {
         let gamma = (2. as Prob).powi(pow_of_2);
@@ -229,7 +230,7 @@ where
         });
       }
     });
-  }
+  } */
 }
 
 fn get_mix_bpp_mat<T>(bpp_mats: &SparseProbMats<T>, rnaalifold_bpp_mat: &SparseProbMat<T>, sa: &MeaSeqAlign<T>, mix_weight: Prob) -> ProbMat
@@ -264,7 +265,8 @@ where
   mix_bpp_mat
 }
 
-fn write_stockholm_file<T>(output_file_path: &Path, sa: &MeaSeqAlign<T>, mea_css: &MeaCss<T>, fasta_records: &FastaRecords)
+// fn write_stockholm_file<T>(output_file_path: &Path, sa: &MeaSeqAlign<T>, mea_css: &MeaCss<T>, fasta_records: &FastaRecords)
+fn write_stockholm_file<T>(output_file_path: &Path, sa: &MeaSeqAlign<T>, fasta_records: &FastaRecords)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
@@ -287,7 +289,8 @@ where
   let descriptor_len = descriptor.len();
   buf_4_writer_2_output_file.push_str(descriptor);
   let mut stockholm_row = vec![' ' as Char; max_seq_id_len - descriptor_len + 2];
-  let mut mea_css_str = get_mea_css_str(&mea_css, sa_len);
+  // let mut mea_css_str = get_mea_css_str(&mea_css, sa_len);
+  let mut mea_css_str = get_mea_css_str(&sa, sa_len);
   stockholm_row.append(&mut mea_css_str);
   let stockholm_row = unsafe {from_utf8_unchecked(&stockholm_row)};
   buf_4_writer_2_output_file.push_str(&stockholm_row);
@@ -295,12 +298,13 @@ where
   let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
 }
 
-fn get_mea_css_str<T>(mea_css: &MeaCss<T>, sa_len: usize) -> MeaCssStr
+// fn get_mea_css_str<T>(mea_css: &MeaCss<T>, sa_len: usize) -> MeaCssStr
+fn get_mea_css_str<T>(sa: &MeaSeqAlign<T>, sa_len: usize) -> MeaCssStr
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let mut mea_css_str = vec![UNPAIRING_BASE; sa_len];
-  for &(i, j) in &mea_css.bpa_pos_pairs {
+  for &(i, j) in &sa.bp_col_pairs {
     mea_css_str[i.to_usize().unwrap()] = BASE_PAIRING_LEFT_BASE;
     mea_css_str[j.to_usize().unwrap()] = BASE_PAIRING_RIGHT_BASE;
   }
