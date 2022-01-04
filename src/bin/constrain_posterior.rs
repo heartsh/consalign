@@ -91,5 +91,5 @@ fn main() {
   for (input_file_path, train_datum) in entries.iter().zip(train_data.iter_mut()) {
     *train_datum = TrainDatumPosterior::<u16>::new(&input_file_path.path(), min_bpp, offset_4_max_gap_num, &mut thread_pool, mix_weight);
   }
-  constrain_posterior::<u16>(&mut thread_pool, &mut train_data, offset_4_max_gap_num, output_file_path, min_bpp);
+  constrain_posterior::<u16>(&mut thread_pool, &mut train_data, output_file_path);
 }
