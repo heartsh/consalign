@@ -146,7 +146,7 @@ fn compute_and_write_mea_sta<T>(output_dir_path: &Path, fasta_records: &FastaRec
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let feature_score_sets = FeatureCountSetsPosterior::load_trained_score_params();
+  let feature_score_sets = FeatureCountsPosterior::load_trained_score_params();
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
   let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
   let sa = consalign::<T>(fasta_records, align_prob_mats_with_rna_id_pairs, bpp_mats, &feature_score_sets, &sa_file_path);
@@ -154,7 +154,7 @@ where
   write_stockholm_file(&output_file_path, &sa, fasta_records);
 }
 
-fn write_stockholm_file<T>(output_file_path: &Path, sa: &MeaSeqAlign<T>, fasta_records: &FastaRecords)
+fn write_stockholm_file<T>(output_file_path: &Path, sa: &MeaStructAlign<T>, fasta_records: &FastaRecords)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
@@ -185,7 +185,7 @@ where
   let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
 }
 
-fn get_mea_css_str<T>(sa: &MeaSeqAlign<T>, sa_len: usize) -> MeaCssStr
+fn get_mea_css_str<T>(sa: &MeaStructAlign<T>, sa_len: usize) -> MeaCssStr
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {

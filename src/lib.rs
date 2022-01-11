@@ -3,7 +3,7 @@ extern crate num_cpus;
 extern crate petgraph;
 extern crate rand;
 
-pub mod trained_feature_score_sets;
+pub mod trained_feature_scores;
 
 pub use consprob::*;
 pub use petgraph::{Graph, Directed, Outgoing};
@@ -24,7 +24,7 @@ pub type PosMapSets<T> = Vec<PosMaps<T>>;
 pub type PosMapSetPair<T> = (PosMaps<T>, PosMaps<T>);
 pub type PosMapSetPairs<T> = Vec<PosMapSetPair<T>>;
 #[derive(Clone)]
-pub struct MeaSeqAlign<T> {
+pub struct MeaStructAlign<T> {
   pub cols: Cols,
   pub rightmost_bp_cols_with_cols: ColsWithCols<T>,
   pub right_bp_col_sets_with_cols: ColSetsWithCols<T>,
@@ -36,7 +36,7 @@ pub struct MeaSeqAlign<T> {
   pub align_probs_avg: Probs,
 }
 #[derive(Clone)]
-pub struct ReadSeqAlign<T> {
+pub struct ReadStructAlign<T> {
   pub cols: Cols,
   pub bp_col_pairs: SparsePosMat<T>,
   pub pos_map_sets: PosMapSets<T>,
@@ -44,7 +44,7 @@ pub struct ReadSeqAlign<T> {
 }
 pub type SparsePosMat<T> = HashSet<PosPair<T>>;
 pub type RnaIds = Vec<RnaId>;
-pub type MeaSeqAlignPair<'a, T> = (&'a MeaSeqAlign<T>, &'a MeaSeqAlign<T>);
+pub type MeaStructAlignPair<'a, T> = (&'a MeaStructAlign<T>, &'a MeaStructAlign<T>);
 pub type SparseMeaMat = HashMap<RnaIdPair, Mea>;
 pub type ProgressiveTree = Graph<RnaId, Mea>;
 pub type ClusterSizes = HashMap<RnaId, usize>;
@@ -53,33 +53,32 @@ pub type ColPairs<T> = HashSet<PosPair<T>>;
 pub type ColsWithCols<T> = HashMap<T, T>;
 pub type MeaMatsWithPosPairs<T> = HashMap<PosPair<T>, SparseProbMat<T>>;
 pub type ColSetsWithCols<T> = HashMap<T, PosProbSeq<T>>;
-pub type PosProbSeq<T> = Vec<(T, Prob, Prob)>;
+pub type PosProbSeq<T> = Vec<(T, Prob)>;
 #[derive(Clone)]
 pub struct TrainDatumPosterior<T> {
   pub fasta_records: FastaRecords,
-  pub observed_seq_align: ReadSeqAlign<T>,
-  pub argmax: MeaSeqAlign<T>,
+  pub observed_struct_align: ReadStructAlign<T>,
+  pub argmax: MeaStructAlign<T>,
   pub align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T>,
   pub bpp_mats: SparseProbMats<T>,
   pub sa_file_path: String,
 }
 pub type TrainDataPosterior<T> = Vec<TrainDatumPosterior<T>>;
 #[derive(Clone, Debug)]
-pub struct FeatureCountSetsPosterior {
+pub struct FeatureCountsPosterior {
   pub basepair_count_posterior: FeatureCount,
   pub align_count_posterior: FeatureCount,
 }
-pub type Accs = Vec<(FeatureCountSetsPosterior, Prob)>;
+pub type Accs = Vec<(FeatureCountsPosterior, Prob)>;
 pub type SparseProbMats<T> = Vec<SparseProbMat<T>>;
 pub type ProbMatsWithRnaIdPairs<T> = HashMap<RnaIdPair, SparseProbMat<T>>;
-pub type GapCaseScoreSetPair = (Probs, Probs);
 
 impl<T: Hash + Clone + Unsigned + PrimInt + FromPrimitive + Integer + Ord + Sync + Send + Display> TrainDatumPosterior<T> {
   pub fn origin() -> TrainDatumPosterior<T> {
     TrainDatumPosterior {
       fasta_records: FastaRecords::new(),
-      observed_seq_align: ReadSeqAlign::<T>::new(),
-      argmax: MeaSeqAlign::<T>::new(),
+      observed_struct_align: ReadStructAlign::<T>::new(),
+      argmax: MeaStructAlign::<T>::new(),
       align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs::<T>::default(),
       bpp_mats: SparseProbMats::<T>::default(),
       sa_file_path: String::new(),
@@ -87,10 +86,10 @@ impl<T: Hash + Clone + Unsigned + PrimInt + FromPrimitive + Integer + Ord + Sync
   }
 
   pub fn new(input_file_path: &Path, min_bpp: Prob, offset_4_max_gap_num: T, thread_pool: &mut Pool, mix_weight: Prob) -> TrainDatumPosterior<T> {
-    let read_seq_align = read_sa_from_stockholm_file(input_file_path);
+    let read_struct_align = read_sa_from_stockholm_file(input_file_path);
     let (prob_mat_sets, align_prob_mat_pairs_with_rna_id_pairs) = consprob::<T>(
       thread_pool,
-      &read_seq_align.fasta_records,
+      &read_struct_align.fasta_records,
       min_bpp,
       offset_4_max_gap_num,
       false,
@@ -103,9 +102,9 @@ impl<T: Hash + Clone + Unsigned + PrimInt + FromPrimitive + Integer + Ord + Sync
     let prefix = input_file_path.file_stem().unwrap();
     let sa_file_path = String::from(parent.join(&format!("{}_consalign.aln", prefix.to_str().unwrap())).to_str().unwrap());
     TrainDatumPosterior {
-      fasta_records: read_seq_align.fasta_records.clone(),
-      observed_seq_align: read_seq_align,
-      argmax: MeaSeqAlign::<T>::new(),
+      fasta_records: read_struct_align.fasta_records.clone(),
+      observed_struct_align: read_struct_align,
+      argmax: MeaStructAlign::<T>::new(),
       align_prob_mats_with_rna_id_pairs: align_prob_mats_with_rna_id_pairs,
       bpp_mats: bpp_mats,
       sa_file_path: sa_file_path,
@@ -113,9 +112,9 @@ impl<T: Hash + Clone + Unsigned + PrimInt + FromPrimitive + Integer + Ord + Sync
   }
 }
 
-impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display + Eq> MeaSeqAlign<T> {
-  pub fn new() -> MeaSeqAlign<T> {
-    MeaSeqAlign {
+impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display + Eq> MeaStructAlign<T> {
+  pub fn new() -> MeaStructAlign<T> {
+    MeaStructAlign {
       cols: Cols::new(),
       rightmost_bp_cols_with_cols: ColsWithCols::<T>::default(),
       right_bp_col_sets_with_cols: ColSetsWithCols::<T>::default(),
@@ -128,16 +127,14 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
     }
   }
 
-  pub fn set_right_bp_info(&mut self, bpp_mats: &SparseProbMats<T>, bpp_mats_alifold: &SparseProbMats<T>) {
+  pub fn set_right_bp_info(&mut self, bpp_mats: &SparseProbMats<T>) {
     let sa_len = self.cols.len();
-    let uses_alifold_bpps = bpp_mats_alifold.len() > 0;
     for i in 0 .. sa_len {
       let ref pos_maps = self.pos_map_sets[i];
       for j in i + 1 .. sa_len {
         let ref pos_maps_2 = self.pos_map_sets[j];
         let pos_map_pairs: Vec<(T, T)> = pos_maps.iter().zip(pos_maps_2.iter()).map(|(&x, &y)| (x, y)).collect();
         let mut bpp_sum = 0.;
-        let mut bpp_sum_alifold = if uses_alifold_bpps {bpp_sum} else {NEG_INFINITY};
         for (pos_map_pair, &rna_id) in pos_map_pairs.iter().zip(self.rna_ids.iter()) {
           let ref bpp_mat = bpp_mats[rna_id];
           match bpp_mat.get(pos_map_pair) {
@@ -145,22 +142,14 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
               bpp_sum += bpp;
             }, None => {},
           }
-          if uses_alifold_bpps {
-            let ref bpp_mat_alifold = bpp_mats_alifold[rna_id];
-            match bpp_mat_alifold.get(pos_map_pair) {
-              Some(&bpp) => {
-                bpp_sum_alifold += bpp;
-              }, None => {},
-            }
-          }
         }
         let (i, j) = (T::from_usize(i).unwrap() + T::one(), T::from_usize(j).unwrap() + T::one());
         match self.right_bp_col_sets_with_cols.get_mut(&i) {
           Some(right_bp_cols) => {
-            right_bp_cols.push((j, bpp_sum, bpp_sum_alifold));
+            right_bp_cols.push((j, bpp_sum));
           }, None => {
             let mut right_bp_cols = PosProbSeq::<T>::new();
-            right_bp_cols.push((j, bpp_sum, bpp_sum_alifold));
+            right_bp_cols.push((j, bpp_sum));
             self.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
           },
         }
@@ -175,7 +164,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
     }
   }
 
-  pub fn set_mix_bpp_mat(&mut self, bpp_mats: &SparseProbMats<T>, bpp_mat_alifold: &SparseProbMat<T>, feature_score_sets: &FeatureCountSetsPosterior) {
+  pub fn set_mix_bpp_mat(&mut self, bpp_mats: &SparseProbMats<T>, bpp_mat_alifold: &SparseProbMat<T>, feature_scores: &FeatureCountsPosterior) {
     let sa_len = self.cols.len();
     let num_of_rnas = self.rna_ids.len();
     for i in 0 .. sa_len {
@@ -204,7 +193,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
         if bpp_alifold > NEG_INFINITY {
           bpp_avg = (bpp_avg + bpp_alifold) / 2.;
         }
-        let weight = feature_score_sets.basepair_count_posterior * bpp_avg - 1.;
+        let weight = feature_scores.basepair_count_posterior * bpp_avg - 1.;
         if weight >= 0. {
           let pos_pair = (T::from_usize(i).unwrap(), T::from_usize(j).unwrap());
           self.mix_bpp_mat.insert(pos_pair, weight);
@@ -240,9 +229,9 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
   }
 }
 
-impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display + Hash> ReadSeqAlign<T> {
-  pub fn new() -> ReadSeqAlign<T> {
-    ReadSeqAlign {
+impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display + Hash> ReadStructAlign<T> {
+  pub fn new() -> ReadStructAlign<T> {
+    ReadStructAlign {
       cols: Cols::new(),
       bp_col_pairs: SparsePosMat::<T>::default(),
       pos_map_sets: PosMapSets::<T>::new(),
@@ -251,9 +240,9 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
   }
 }
 
-impl FeatureCountSetsPosterior {
-  pub fn new(init_val: FeatureCount) -> FeatureCountSetsPosterior {
-    FeatureCountSetsPosterior {
+impl FeatureCountsPosterior {
+  pub fn new(init_val: FeatureCount) -> FeatureCountsPosterior {
+    FeatureCountsPosterior {
       basepair_count_posterior: init_val,
       align_count_posterior: init_val,
     }
@@ -262,22 +251,22 @@ impl FeatureCountSetsPosterior {
 
 pub const GAP: Char = '-' as Char;
 pub const MAX_ITER_REFINE: usize = 20;
-pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str = "../src/trained_feature_score_sets.rs";
+pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str = "../src/trained_feature_scores.rs";
 pub const MIN_LOG_GAMMA_BASEPAIR: i32 = 0;
 pub const MIN_LOG_GAMMA_ALIGN: i32 = 2;
 pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 5;
 pub const MAX_LOG_GAMMA_ALIGN: i32 = MAX_LOG_GAMMA_BASEPAIR;
 pub const BRACKET_PAIRS: [(char, char); 9] = [('(', ')'), ('<', '>'), ('{', '}'), ('[', ']'), ('A', 'a'), ('B', 'b'), ('C', 'c'), ('D', 'd'), ('E', 'e'), ];
 pub const DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN: usize = 4 * DEFAULT_OFFSET_4_MAX_GAP_NUM;
-pub const DEFAULT_MIN_BPP_ALIGN: Prob = 0.01;
+pub const DEFAULT_MIN_BPP_ALIGN: Prob = 0.04;
 
 pub fn consalign<T>(
   fasta_records: &FastaRecords,
   align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>,
   bpp_mats: &SparseProbMats<T>,
-  feature_score_sets: &FeatureCountSetsPosterior,
+  feature_scores: &FeatureCountsPosterior,
   sa_file_path: &Path,
-) -> MeaSeqAlign<T>
+) -> MeaStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -289,13 +278,13 @@ where
   for i in 0 .. num_of_rnas {
     let ref seq = fasta_records[i].seq;
     let ref sparse_bpp_mat = bpp_mats[i];
-    let converted_seq = convert_seq(seq, i, sparse_bpp_mat, &SparseProbMat::<T>::default());
+    let converted_seq = convert_seq(seq, i, sparse_bpp_mat);
     for j in i + 1 .. num_of_rnas {
       let ref seq_2 = fasta_records[j].seq;
       let ref sparse_bpp_mat_2 = bpp_mats[j];
-      let converted_seq_2 = convert_seq(seq_2, j, sparse_bpp_mat_2, &SparseProbMat::<T>::default());
-      let pair_seq_align = get_mea_align(&(&converted_seq, &converted_seq_2), align_prob_mats_with_rna_id_pairs, bpp_mats, &feature_score_sets, &SparseProbMats::<T>::default());
-      mea_mat.insert((i, j), pair_seq_align.ea);
+      let converted_seq_2 = convert_seq(seq_2, j, sparse_bpp_mat_2);
+      let pair_struct_align = get_mea_align(&(&converted_seq, &converted_seq_2), align_prob_mats_with_rna_id_pairs, bpp_mats, &feature_scores);
+      mea_mat.insert((i, j), pair_struct_align.ea);
     }
     let node_index = progressive_tree.add_node(i);
     cluster_sizes.insert(i, 1);
@@ -341,74 +330,62 @@ where
     new_cluster_id += 1;
   }
   let root = node_indexes[&(new_cluster_id - 1)];
-  let mut mea_seq_align = recursive_mea_seq_align(&progressive_tree, root, align_prob_mats_with_rna_id_pairs, &fasta_records, bpp_mats, &feature_score_sets, &SparseProbMats::<T>::default());
-  let bpp_mat_alifold = get_bpp_mat_alifold(&mea_seq_align, sa_file_path, fasta_records);
-  mea_seq_align.set_mix_bpp_mat(bpp_mats, &bpp_mat_alifold, &feature_score_sets);
-  consalifold(&mut mea_seq_align);
-  for col in mea_seq_align.cols.iter_mut() {
-    let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
+  let mut mea_struct_align = recursive_mea_struct_align(&progressive_tree, root, align_prob_mats_with_rna_id_pairs, &fasta_records, bpp_mats, &feature_scores);
+  let bpp_mat_alifold = get_bpp_mat_alifold(&mea_struct_align, sa_file_path, fasta_records);
+  mea_struct_align.set_mix_bpp_mat(bpp_mats, &bpp_mat_alifold, &feature_scores);
+  consalifold(&mut mea_struct_align);
+  for col in mea_struct_align.cols.iter_mut() {
+    let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(mea_struct_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
     pairs.sort_by_key(|x| x.1.clone());
     *col = pairs.iter().map(|x| x.0).collect();
   }
-  for pos_maps in mea_seq_align.pos_map_sets.iter_mut() {
-    let mut pairs: Vec<(T, RnaId)> = pos_maps.iter().zip(mea_seq_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
+  for pos_maps in mea_struct_align.pos_map_sets.iter_mut() {
+    let mut pairs: Vec<(T, RnaId)> = pos_maps.iter().zip(mea_struct_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
     pairs.sort_by_key(|x| x.1);
     *pos_maps = pairs.iter().map(|x| x.0).collect();
   }
-  mea_seq_align.rna_ids.sort();
-  mea_seq_align
+  mea_struct_align.rna_ids.sort();
+  mea_struct_align
 }
 
-pub fn recursive_mea_seq_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>, fasta_records: &FastaRecords, bpp_mats: &SparseProbMats<T>, feature_score_sets: &FeatureCountSetsPosterior, bpp_mats_alifold: &SparseProbMats<T>) -> MeaSeqAlign<T>
+pub fn recursive_mea_struct_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>, fasta_records: &FastaRecords, bpp_mats: &SparseProbMats<T>, feature_scores: &FeatureCountsPosterior) -> MeaStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
   let num_of_rnas = fasta_records.len();
   let rna_id = *progressive_tree.node_weight(node).unwrap();
-  let uses_alifold_bpps = bpp_mats_alifold.len() > 0;
   if rna_id < num_of_rnas {
     let ref seq = fasta_records[rna_id].seq;
     let ref sparse_bpp_mat = bpp_mats[rna_id];
-    let empty_mat = SparseProbMat::<T>::default();
-    convert_seq(seq, rna_id, sparse_bpp_mat, if uses_alifold_bpps {&bpp_mats[rna_id]} else {&empty_mat})
+    convert_seq(seq, rna_id, sparse_bpp_mat)
   } else {
     let mut neighbors = progressive_tree.neighbors_directed(node, Outgoing).detach();
     let child = neighbors.next_node(progressive_tree).unwrap();
-    let child_mea_seq_align = recursive_mea_seq_align(progressive_tree, child, align_prob_mats_with_rna_id_pairs, fasta_records, bpp_mats, feature_score_sets, bpp_mats_alifold);
+    let child_mea_struct_align = recursive_mea_struct_align(progressive_tree, child, align_prob_mats_with_rna_id_pairs, fasta_records, bpp_mats, feature_scores);
     let child_2 = neighbors.next_node(progressive_tree).unwrap();
-    let child_mea_seq_align_2 = recursive_mea_seq_align(progressive_tree, child_2, align_prob_mats_with_rna_id_pairs, fasta_records, bpp_mats, feature_score_sets, bpp_mats_alifold);
-    get_mea_align(&(&child_mea_seq_align, &child_mea_seq_align_2), align_prob_mats_with_rna_id_pairs, bpp_mats, feature_score_sets, bpp_mats_alifold)
+    let child_mea_struct_align_2 = recursive_mea_struct_align(progressive_tree, child_2, align_prob_mats_with_rna_id_pairs, fasta_records, bpp_mats, feature_scores);
+    get_mea_align(&(&child_mea_struct_align, &child_mea_struct_align_2), align_prob_mats_with_rna_id_pairs, bpp_mats, feature_scores)
   }
 }
 
-pub fn convert_seq<T>(seq: &Seq, rna_id: RnaId, sparse_bpp_mat: &SparseProbMat<T>, bpp_mat_alifold: &SparseProbMat<T>) -> MeaSeqAlign<T>
+pub fn convert_seq<T>(seq: &Seq, rna_id: RnaId, sparse_bpp_mat: &SparseProbMat<T>) -> MeaStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
-  let mut converted_seq = MeaSeqAlign::new();
+  let mut converted_seq = MeaStructAlign::new();
   let seq_len = seq.len();
   converted_seq.cols = seq[1 .. seq_len - 1].iter().map(|&x| vec![x]).collect();
   converted_seq.pos_map_sets = (1 .. seq.len() - 1).map(|x| vec![T::from_usize(x).unwrap()]).collect();
   converted_seq.rna_ids = vec![rna_id];
   converted_seq.align_probs_avg = vec![1.; seq_len - 2];
-  let uses_alifold_bpps = bpp_mat_alifold.len() > 0;
   for (pos_pair, &bpp) in sparse_bpp_mat {
     let (i, j) = *pos_pair;
-    let bpp_alifold = if uses_alifold_bpps {
-      match bpp_mat_alifold.get(pos_pair) {
-        Some(&bpp_alifold) => {
-          bpp_alifold
-        }, None => {0.},
-      }
-    } else {
-      NEG_INFINITY
-    };
     match converted_seq.right_bp_col_sets_with_cols.get_mut(&i) {
       Some(right_bp_cols) => {
-        right_bp_cols.push((j, bpp, bpp_alifold));
+        right_bp_cols.push((j, bpp));
       }, None => {
         let mut right_bp_cols = PosProbSeq::<T>::new();
-        right_bp_cols.push((j, bpp, bpp_alifold));
+        right_bp_cols.push((j, bpp));
         converted_seq.right_bp_col_sets_with_cols.insert(i, right_bp_cols);
       },
     }
@@ -420,33 +397,33 @@ where
   converted_seq
 }
 
-pub fn get_mea_align<'a, T>(seq_align_pair: &MeaSeqAlignPair<'a, T>, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, feature_score_sets: &FeatureCountSetsPosterior, bpp_mats_alifold: &SparseProbMats<T>) -> MeaSeqAlign<T>
+pub fn get_mea_align<'a, T>(struct_align_pair: &MeaStructAlignPair<'a, T>, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, feature_scores: &FeatureCountsPosterior) -> MeaStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
-  let seq_align_len_pair = (seq_align_pair.0.cols.len(), seq_align_pair.1.cols.len());
-  let rna_num_pair = (seq_align_pair.0.rna_ids.len(), seq_align_pair.1.rna_ids.len());
+  let struct_align_len_pair = (struct_align_pair.0.cols.len(), struct_align_pair.1.cols.len());
+  let rna_num_pair = (struct_align_pair.0.rna_ids.len(), struct_align_pair.1.rna_ids.len());
   let num_of_rnas = rna_num_pair.0 + rna_num_pair.1;
   let denom = (num_of_rnas * (num_of_rnas - 1) / 2) as Prob;
-  let mut align_prob_mat_avg = SparseProbMat::<T>::default();
-  let ref rna_ids = seq_align_pair.0.rna_ids;
-  let ref rna_ids_2 = seq_align_pair.1.rna_ids;
-  let ref pos_map_sets = seq_align_pair.0.pos_map_sets;
-  let ref pos_map_sets_2 = seq_align_pair.1.pos_map_sets;
-  let seq_align_len_pair = (
-    T::from_usize(seq_align_len_pair.0).unwrap(),
-    T::from_usize(seq_align_len_pair.1).unwrap(),
+  let mut align_weight_mat = SparseProbMat::<T>::default();
+  let ref rna_ids = struct_align_pair.0.rna_ids;
+  let ref rna_ids_2 = struct_align_pair.1.rna_ids;
+  let ref pos_map_sets = struct_align_pair.0.pos_map_sets;
+  let ref pos_map_sets_2 = struct_align_pair.1.pos_map_sets;
+  let struct_align_len_pair = (
+    T::from_usize(struct_align_len_pair.0).unwrap(),
+    T::from_usize(struct_align_len_pair.1).unwrap(),
   );
   let pseudo_col_quadruple = (
     T::zero(),
-    seq_align_len_pair.0 + T::one(),
+    struct_align_len_pair.0 + T::one(),
     T::zero(),
-    seq_align_len_pair.1 + T::one(),
+    struct_align_len_pair.1 + T::one(),
   );
-  for i in range_inclusive(T::one(), seq_align_len_pair.0) {
+  for i in range_inclusive(T::one(), struct_align_len_pair.0) {
     let long_i = i.to_usize().unwrap();
     let ref pos_maps = pos_map_sets[long_i - 1];
-    for j in range_inclusive(T::one(), seq_align_len_pair.1) {
+    for j in range_inclusive(T::one(), struct_align_len_pair.1) {
       let col_pair = (i, j);
       let long_j = j.to_usize().unwrap();
       let mut align_prob_sum = 0.;
@@ -463,81 +440,81 @@ where
           }
         }
       }
-      let align_prob_avg = feature_score_sets.align_count_posterior * align_prob_sum / denom - 1.;
-      if align_prob_avg >= 0. {
-        align_prob_mat_avg.insert(col_pair, align_prob_avg);
+      let align_weight = feature_scores.align_count_posterior * align_prob_sum / denom - 1.;
+      if align_weight >= 0. {
+        align_weight_mat.insert(col_pair, align_weight);
       }
     }
   }
   let mut mea_mats_with_col_pairs = MeaMatsWithPosPairs::default();
-  for i in range_inclusive(T::one(), seq_align_len_pair.0).rev() {
-    match seq_align_pair.0.rightmost_bp_cols_with_cols.get(&i) {
+  for i in range_inclusive(T::one(), struct_align_len_pair.0).rev() {
+    match struct_align_pair.0.rightmost_bp_cols_with_cols.get(&i) {
       Some(&j) => {
-        for k in range_inclusive(T::one(), seq_align_len_pair.1).rev() {
+        for k in range_inclusive(T::one(), struct_align_len_pair.1).rev() {
           let col_pair_left = (i, k);
-          if !align_prob_mat_avg.contains_key(&col_pair_left) {continue;}
-          match seq_align_pair.1.rightmost_bp_cols_with_cols.get(&k) {
+          if !align_weight_mat.contains_key(&col_pair_left) {continue;}
+          match struct_align_pair.1.rightmost_bp_cols_with_cols.get(&k) {
             Some(&l) => {
               let col_quadruple = (i, j, k, l);
-              let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_prob_mat_avg, &col_quadruple);
-              update_mea_mats_with_col_pairs(&mut mea_mats_with_col_pairs, &col_pair_left, seq_align_pair, &mea_mat, &align_prob_mat_avg, feature_score_sets);
+              let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple);
+              update_mea_mats_with_col_pairs(&mut mea_mats_with_col_pairs, &col_pair_left, struct_align_pair, &mea_mat, &align_weight_mat, feature_scores);
             }, None => {},
           }
         }
       }, None => {},
     }
   }
-  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_prob_mat_avg, &pseudo_col_quadruple);
-  let mut new_mea_seq_align = MeaSeqAlign::new();
-  new_mea_seq_align.ea = mea_mat[&(pseudo_col_quadruple.1 - T::one(), pseudo_col_quadruple.3 - T::one())];
-  new_mea_seq_align.ea += seq_align_pair.0.align_probs_avg.iter().map(|&x| feature_score_sets.align_count_posterior * x / denom - 1.).sum::<Mea>();
-  new_mea_seq_align.ea += seq_align_pair.1.align_probs_avg.iter().map(|&x| feature_score_sets.align_count_posterior * x / denom - 1.).sum::<Mea>();
-  let mut new_rna_ids = seq_align_pair.0.rna_ids.clone();
-  let mut rna_ids_append = seq_align_pair.1.rna_ids.clone();
+  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &pseudo_col_quadruple);
+  let mut new_mea_struct_align = MeaStructAlign::new();
+  new_mea_struct_align.ea = mea_mat[&(pseudo_col_quadruple.1 - T::one(), pseudo_col_quadruple.3 - T::one())];
+  new_mea_struct_align.ea += struct_align_pair.0.align_probs_avg.iter().map(|&x| feature_scores.align_count_posterior * x / denom - 1.).sum::<Mea>();
+  new_mea_struct_align.ea += struct_align_pair.1.align_probs_avg.iter().map(|&x| feature_scores.align_count_posterior * x / denom - 1.).sum::<Mea>();
+  let mut new_rna_ids = struct_align_pair.0.rna_ids.clone();
+  let mut rna_ids_append = struct_align_pair.1.rna_ids.clone();
   new_rna_ids.append(&mut rna_ids_append);
-  new_mea_seq_align.rna_ids = new_rna_ids;
+  new_mea_struct_align.rna_ids = new_rna_ids;
   let mut bp_pos_map_set_pairs = PosMapSetPairs::<T>::new();
-  traceback(&mut new_mea_seq_align, seq_align_pair, &pseudo_col_quadruple, &pseudo_col_quadruple, &mea_mats_with_col_pairs, 0, &align_prob_mat_avg, &mut bp_pos_map_set_pairs, feature_score_sets);
-  let sa_len = new_mea_seq_align.cols.len();
+  traceback(&mut new_mea_struct_align, struct_align_pair, &pseudo_col_quadruple, &pseudo_col_quadruple, &mea_mats_with_col_pairs, 0, &align_weight_mat, &mut bp_pos_map_set_pairs, feature_scores);
+  let sa_len = new_mea_struct_align.cols.len();
   let col_gaps_only = vec![PSEUDO_BASE; num_of_rnas];
   for i in (0 .. sa_len).rev() {
-    let ref col = new_mea_seq_align.cols[i];
+    let ref col = new_mea_struct_align.cols[i];
     if *col == col_gaps_only {
-      new_mea_seq_align.cols.remove(i);
-      new_mea_seq_align.pos_map_sets.remove(i);
+      new_mea_struct_align.cols.remove(i);
+      new_mea_struct_align.pos_map_sets.remove(i);
     }
   }
-  let sa_len = new_mea_seq_align.cols.len();
-  new_mea_seq_align.ea /= sa_len as Mea;
+  let sa_len = new_mea_struct_align.cols.len();
+  new_mea_struct_align.ea /= sa_len as Mea;
   for bp_pos_map_set_pair in &bp_pos_map_set_pairs {
     for i in 0 .. sa_len {
-      let ref pos_maps = new_mea_seq_align.pos_map_sets[i];
+      let ref pos_maps = new_mea_struct_align.pos_map_sets[i];
       if *pos_maps != bp_pos_map_set_pair.0 {
         continue;
       }
       let short_i = T::from_usize(i).unwrap();
       for j in i + 1 .. sa_len {
-        let ref pos_maps_2 = new_mea_seq_align.pos_map_sets[j];
+        let ref pos_maps_2 = new_mea_struct_align.pos_map_sets[j];
         if *pos_maps_2 == bp_pos_map_set_pair.1 {
           let short_j = T::from_usize(j).unwrap();
-          new_mea_seq_align.bp_col_pairs.insert((short_i, short_j));
+          new_mea_struct_align.bp_col_pairs.insert((short_i, short_j));
           break;
         }
       }
     }
   }
-  new_mea_seq_align.set_right_bp_info(bpp_mats, bpp_mats_alifold);
-  new_mea_seq_align.set_align_probs_avg(align_prob_mats_with_rna_id_pairs);
-  new_mea_seq_align
+  new_mea_struct_align.set_right_bp_info(bpp_mats);
+  new_mea_struct_align.set_align_probs_avg(align_prob_mats_with_rna_id_pairs);
+  new_mea_struct_align
 }
 
-pub fn traceback <'a, T>(new_mea_seq_align: &mut MeaSeqAlign<T>, seq_align_pair: &MeaSeqAlignPair<'a, T>, pseudo_col_quadruple: &PosQuadruple<T>, col_quadruple: &PosQuadruple<T>, mea_mats_with_col_pairs: &MeaMatsWithPosPairs<T>, offset: usize, align_prob_mat_avg: &SparseProbMat<T>, bp_pos_map_set_pairs: &mut PosMapSetPairs<T>, feature_score_sets: &FeatureCountSetsPosterior)
+pub fn traceback <'a, T>(new_mea_struct_align: &mut MeaStructAlign<T>, struct_align_pair: &MeaStructAlignPair<'a, T>, pseudo_col_quadruple: &PosQuadruple<T>, col_quadruple: &PosQuadruple<T>, mea_mats_with_col_pairs: &MeaMatsWithPosPairs<T>, offset: usize, align_weight_mat: &SparseProbMat<T>, bp_pos_map_set_pairs: &mut PosMapSetPairs<T>, feature_scores: &FeatureCountsPosterior)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
-  let rna_num_pair = (seq_align_pair.0.rna_ids.len(), seq_align_pair.1.rna_ids.len());
+  let rna_num_pair = (struct_align_pair.0.rna_ids.len(), struct_align_pair.1.rna_ids.len());
   let mut mea;
-  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_prob_mat_avg, &col_quadruple);
+  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple);
   let (i, j, k, l) = *col_quadruple;
   let (mut u, mut v) = (j - T::one(), l - T::one());
   while u > i || v > k {
@@ -545,19 +522,19 @@ where
     mea = mea_mat[&col_pair];
     let (long_u, long_v) = (u.to_usize().unwrap(), v.to_usize().unwrap());
     if u > i && v > k {
-      match align_prob_mat_avg.get(&col_pair) {
+      match align_weight_mat.get(&col_pair) {
         Some(&align_prob_avg) => {
           let col_pair_4_match = (u - T::one(), v - T::one());
           let ea = mea_mat[&col_pair_4_match] + align_prob_avg;
           if ea == mea {
-            let mut new_col = seq_align_pair.0.cols[long_u - 1].clone();
-            let mut col_append = seq_align_pair.1.cols[long_v - 1].clone();
+            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
+            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
             new_col.append(&mut col_append);
-            new_mea_seq_align.cols.insert(offset, new_col);
-            let mut new_pos_map_sets = seq_align_pair.0.pos_map_sets[long_u - 1].clone();
-            let mut pos_map_sets_append = seq_align_pair.1.pos_map_sets[long_v - 1].clone();
+            new_mea_struct_align.cols.insert(offset, new_col);
+            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
             new_pos_map_sets.append(&mut pos_map_sets_append);
-            new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets);
+            new_mea_struct_align.pos_map_sets.insert(offset, new_pos_map_sets);
             u = u - T::one();
             v = v - T::one();
             continue;
@@ -574,25 +551,25 @@ where
               Some(&ea) => {
                 let ea = ea + mea_4_bpa;
                 if ea == mea {
-                  let mut new_col = seq_align_pair.0.cols[long_u - 1].clone();
-                  let mut col_append = seq_align_pair.1.cols[long_v - 1].clone();
+                  let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
+                  let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
                   new_col.append(&mut col_append);
-                  new_mea_seq_align.cols.insert(offset, new_col);
-                  let mut new_pos_map_sets = seq_align_pair.0.pos_map_sets[long_u - 1].clone();
-                  let mut pos_map_sets_append = seq_align_pair.1.pos_map_sets[long_v - 1].clone();
+                  new_mea_struct_align.cols.insert(offset, new_col);
+                  let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+                  let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
                   new_pos_map_sets.append(&mut pos_map_sets_append);
-                  new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets.clone());
+                  new_mea_struct_align.pos_map_sets.insert(offset, new_pos_map_sets.clone());
                   let long_col_pair_left = (col_pair_left.0.to_usize().unwrap(), col_pair_left.1.to_usize().unwrap());
-                  let mut new_col = seq_align_pair.0.cols[long_col_pair_left.0 - 1].clone();
-                  let mut col_append = seq_align_pair.1.cols[long_col_pair_left.1 - 1].clone();
+                  let mut new_col = struct_align_pair.0.cols[long_col_pair_left.0 - 1].clone();
+                  let mut col_append = struct_align_pair.1.cols[long_col_pair_left.1 - 1].clone();
                   new_col.append(&mut col_append);
-                  new_mea_seq_align.cols.insert(offset, new_col);
-                  let mut new_pos_map_sets_2 = seq_align_pair.0.pos_map_sets[long_col_pair_left.0 - 1].clone();
-                  let mut pos_map_sets_append = seq_align_pair.1.pos_map_sets[long_col_pair_left.1 - 1].clone();
+                  new_mea_struct_align.cols.insert(offset, new_col);
+                  let mut new_pos_map_sets_2 = struct_align_pair.0.pos_map_sets[long_col_pair_left.0 - 1].clone();
+                  let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_col_pair_left.1 - 1].clone();
                   new_pos_map_sets_2.append(&mut pos_map_sets_append);
-                  new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets_2.clone());
+                  new_mea_struct_align.pos_map_sets.insert(offset, new_pos_map_sets_2.clone());
                   bp_pos_map_set_pairs.push((new_pos_map_sets_2, new_pos_map_sets));
-                  traceback(new_mea_seq_align, seq_align_pair, pseudo_col_quadruple, &(col_pair_left.0, u, col_pair_left.1, v), mea_mats_with_col_pairs, offset + 1, align_prob_mat_avg, bp_pos_map_set_pairs, feature_score_sets);
+                  traceback(new_mea_struct_align, struct_align_pair, pseudo_col_quadruple, &(col_pair_left.0, u, col_pair_left.1, v), mea_mats_with_col_pairs, offset + 1, align_weight_mat, bp_pos_map_set_pairs, feature_scores);
                   u = col_pair_4_match.0;
                   v = col_pair_4_match.1;
                   is_basepair_match_found = true;
@@ -611,14 +588,14 @@ where
       match mea_mat.get(&(u - T::one(), v)) {
         Some(&ea) => {
           if ea == mea {
-            let mut new_col = seq_align_pair.0.cols[long_u - 1].clone();
+            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
             let mut col_append = vec![PSEUDO_BASE; rna_num_pair.1];
             new_col.append(&mut col_append);
-            new_mea_seq_align.cols.insert(offset, new_col);
-            let mut new_pos_map_sets = seq_align_pair.0.pos_map_sets[long_u - 1].clone();
+            new_mea_struct_align.cols.insert(offset, new_col);
+            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
             let mut pos_map_sets_append = vec![T::zero(); rna_num_pair.1];
             new_pos_map_sets.append(&mut pos_map_sets_append);
-            new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets);
+            new_mea_struct_align.pos_map_sets.insert(offset, new_pos_map_sets);
             u = u - T::one();
             continue;
           }
@@ -630,13 +607,13 @@ where
         Some(&ea) => {
           if ea == mea {
             let mut new_col = vec![PSEUDO_BASE; rna_num_pair.0];
-            let mut col_append = seq_align_pair.1.cols[long_v - 1].clone();
+            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
             new_col.append(&mut col_append);
-            new_mea_seq_align.cols.insert(offset, new_col);
+            new_mea_struct_align.cols.insert(offset, new_col);
             let mut new_pos_map_sets = vec![T::zero(); rna_num_pair.0];
-            let mut pos_map_sets_append = seq_align_pair.1.pos_map_sets[long_v - 1].clone();
+            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
             new_pos_map_sets.append(&mut pos_map_sets_append);
-            new_mea_seq_align.pos_map_sets.insert(offset, new_pos_map_sets);
+            new_mea_struct_align.pos_map_sets.insert(offset, new_pos_map_sets);
             v = v - T::one();
           }
         }, None => {},
@@ -645,7 +622,7 @@ where
   }
 }
 
-pub fn get_mea_mat<'a, T>(mea_mats_with_col_pairs: &MeaMatsWithPosPairs<T>, align_prob_mat_avg: &SparseProbMat<T>, col_quadruple: &PosQuadruple<T>) -> SparseProbMat<T>
+pub fn get_mea_mat<'a, T>(mea_mats_with_col_pairs: &MeaMatsWithPosPairs<T>, align_weight_mat: &SparseProbMat<T>, col_quadruple: &PosQuadruple<T>) -> SparseProbMat<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -676,7 +653,7 @@ where
         }, None => {},
       }
       let col_pair_4_match = (u - T::one(), v - T::one());
-      match align_prob_mat_avg.get(&col_pair) {
+      match align_weight_mat.get(&col_pair) {
         Some(&align_prob_avg) => {
           match mea_mat.get(&col_pair_4_match) {
             Some(&ea) => {
@@ -704,8 +681,7 @@ where
           }
         }, None => {},
       }
-      if mea >= 0. {
-      // if mea > NEG_INFINITY {
+      if mea > NEG_INFINITY {
         mea_mat.insert(col_pair, mea);
       }
     }
@@ -713,28 +689,24 @@ where
   mea_mat
 }
 
-pub fn update_mea_mats_with_col_pairs<'a, T>(mea_mats_with_col_pairs: &mut MeaMatsWithPosPairs<T>, col_pair_left: &PosPair<T>, seq_align_pair: &MeaSeqAlignPair<'a, T>, mea_mat: &SparseProbMat<T>, align_prob_mat_avg: &SparseProbMat<T>, feature_score_sets: &FeatureCountSetsPosterior)
+pub fn update_mea_mats_with_col_pairs<'a, T>(mea_mats_with_col_pairs: &mut MeaMatsWithPosPairs<T>, col_pair_left: &PosPair<T>, struct_align_pair: &MeaStructAlignPair<'a, T>, mea_mat: &SparseProbMat<T>, align_weight_mat: &SparseProbMat<T>, feature_scores: &FeatureCountsPosterior)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
-  let num_of_rnas = (seq_align_pair.0.rna_ids.len() + seq_align_pair.1.rna_ids.len()) as Prob;
+  let num_of_rnas = (struct_align_pair.0.rna_ids.len() + struct_align_pair.1.rna_ids.len()) as Prob;
   let (i, k) = *col_pair_left;
-  let ref right_bp_cols = seq_align_pair.0.right_bp_col_sets_with_cols[&i];
-  let ref right_bp_cols_2 = seq_align_pair.1.right_bp_col_sets_with_cols[&k];
-  let align_prob_avg_left = align_prob_mat_avg[&col_pair_left];
-  for &(j, weight, weight_alifold) in right_bp_cols.iter() {
-    for &(l, weight_2, weight_alifold_2) in right_bp_cols_2.iter() {
+  let ref right_bp_cols = struct_align_pair.0.right_bp_col_sets_with_cols[&i];
+  let ref right_bp_cols_2 = struct_align_pair.1.right_bp_col_sets_with_cols[&k];
+  let align_weight_left = align_weight_mat[&col_pair_left];
+  for &(j, weight) in right_bp_cols.iter() {
+    for &(l, weight_2) in right_bp_cols_2.iter() {
       let col_pair_right = (j, l);
-      if !align_prob_mat_avg.contains_key(&col_pair_right) {continue;}
-      let align_prob_avg_right = align_prob_mat_avg[&col_pair_right];
-      let mut mix_bpp = (weight + weight_2) / num_of_rnas;
-      let weight_alifold_avg = (weight_alifold + weight_alifold_2) / num_of_rnas;
-      if weight_alifold_avg > NEG_INFINITY {
-        mix_bpp = (mix_bpp + weight_alifold_avg) / 2.;
-      }
-      let mix_weight = feature_score_sets.basepair_count_posterior * mix_bpp - 1.;
-      if mix_weight < 0. {continue;}
-      let basepair_align_prob_avg = mix_weight + align_prob_avg_left + align_prob_avg_right;
+      if !align_weight_mat.contains_key(&col_pair_right) {continue;}
+      let align_weight_right = align_weight_mat[&col_pair_right];
+      let bpp_avg = (weight + weight_2) / num_of_rnas;
+      let bpp_weight = feature_scores.basepair_count_posterior * bpp_avg - 1.;
+      if bpp_weight < 0. {continue;}
+      let basepair_align_prob_avg = bpp_weight + align_weight_left + align_weight_right;
       let mea_4_bpa = basepair_align_prob_avg + mea_mat[&(j - T::one(), l - T::one())];
       match mea_mats_with_col_pairs.get_mut(&col_pair_right) {
         Some(mea_mat_4_bpas) => {
@@ -760,7 +732,7 @@ pub fn revert_char(c: Base) -> u8 {
   }
 }
 
-pub fn consalifold<T>(sa: &mut MeaSeqAlign<T>)
+pub fn consalifold<T>(sa: &mut MeaStructAlign<T>)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer,
 {
@@ -840,17 +812,17 @@ where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
   let mut max_acc = NEG_INFINITY;
-  let mut argmax = FeatureCountSetsPosterior::new(NEG_INFINITY);
+  let mut argmax = FeatureCountsPosterior::new(NEG_INFINITY);
   let mut accs = Vec::new();
   for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
     let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
     for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
       let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
-      let mut feature_score_sets = FeatureCountSetsPosterior::new(0.);
-      feature_score_sets.basepair_count_posterior = basepair_count_posterior;
-      feature_score_sets.align_count_posterior = align_count_posterior;
+      let mut feature_scores = FeatureCountsPosterior::new(0.);
+      feature_scores.basepair_count_posterior = basepair_count_posterior;
+      feature_scores.align_count_posterior = align_count_posterior;
       thread_pool.scoped(|scope| {
-        let ref ref_2_feature_score_sets = feature_score_sets;
+        let ref ref_2_feature_scores = feature_scores;
         for train_datum in train_data.iter_mut() {
           let ref fasta_records = train_datum.fasta_records;
           let ref align_prob_mats_with_rna_id_pairs = train_datum.align_prob_mats_with_rna_id_pairs;
@@ -862,7 +834,7 @@ where
               fasta_records,
               align_prob_mats_with_rna_id_pairs,
               bpp_mats,
-              ref_2_feature_score_sets,
+              ref_2_feature_scores,
               sa_file_path,
             );
           });
@@ -870,16 +842,16 @@ where
       });
       let mcc = get_mcc(train_data);
       let sps = get_sps(train_data);
-      println!("basepair_score: {}, align_score: {}, mcc: {}, sps: {}", feature_score_sets.basepair_count_posterior, feature_score_sets.align_count_posterior, mcc, sps);
+      println!("basepair_score: {}, align_score: {}, mcc: {}, sps: {}", feature_scores.basepair_count_posterior, feature_scores.align_count_posterior, mcc, sps);
       let acc = (mcc * sps).sqrt();
-      accs.push((feature_score_sets.clone(), acc));
+      accs.push((feature_scores.clone(), acc));
       if acc > max_acc {
         max_acc = acc;
-        argmax = feature_score_sets;
+        argmax = feature_scores;
       }
     }
   }
-  write_feature_score_sets_trained_posterior(&argmax);
+  write_feature_scores_trained_posterior(&argmax);
   write_accs(&accs, output_file_path);
 }
 
@@ -889,14 +861,14 @@ where
 {
   let (mut pt, mut nt, mut pf, mut nf): (Prob, Prob, Prob, Prob) = (0., 0., 0., 0.);
   for train_datum in train_data {
-    let ref ref_seq_align = train_datum.observed_seq_align;
+    let ref ref_struct_align = train_datum.observed_struct_align;
     let ref argmax = train_datum.argmax;
     let ref fasta_records = train_datum.fasta_records;
-    let num_of_rnas = train_datum.observed_seq_align.cols[0].len();
+    let num_of_rnas = train_datum.observed_struct_align.cols[0].len();
     for i in 0 .. num_of_rnas {
       let mut mat_ref = SparsePosMat::<T>::default();
-      for bp_col_pair in &ref_seq_align.bp_col_pairs {
-        let pos_map_pair = (ref_seq_align.pos_map_sets[bp_col_pair.0.to_usize().unwrap()][i], ref_seq_align.pos_map_sets[bp_col_pair.1.to_usize().unwrap()][i]);
+      for bp_col_pair in &ref_struct_align.bp_col_pairs {
+        let pos_map_pair = (ref_struct_align.pos_map_sets[bp_col_pair.0.to_usize().unwrap()][i], ref_struct_align.pos_map_sets[bp_col_pair.1.to_usize().unwrap()][i]);
         mat_ref.insert(pos_map_pair);
       }
       let mut mat_max = SparsePosMat::<T>::default();
@@ -940,17 +912,17 @@ where
 {
   let (mut tp, mut total): (Prob, Prob) = (0., 0.);
   for train_datum in train_data {
-    let ref ref_seq_align = train_datum.observed_seq_align;
+    let ref ref_struct_align = train_datum.observed_struct_align;
     let ref argmax = train_datum.argmax;
-    let sa_len_ref = train_datum.observed_seq_align.cols.len();
+    let sa_len_ref = train_datum.observed_struct_align.cols.len();
     let sa_len_max = train_datum.argmax.cols.len();
-    let num_of_rnas = train_datum.observed_seq_align.cols[0].len();
+    let num_of_rnas = train_datum.observed_struct_align.cols[0].len();
     for i in 0 .. num_of_rnas {
       for j in i + 1 .. num_of_rnas {
         let mut mat_ref = SparsePosMat::<T>::default();
         let mut mat_max = SparsePosMat::<T>::default();
         for k in 0 .. sa_len_ref {
-          let ref pos_maps_ref = ref_seq_align.pos_map_sets[k];
+          let ref pos_maps_ref = ref_struct_align.pos_map_sets[k];
           let pos_map_ref = pos_maps_ref[i];
           let pos_map_ref_2 = pos_maps_ref[j];
           let pos_map_pair_ref = (pos_map_ref, pos_map_ref_2);
@@ -978,11 +950,11 @@ where
   sps
 }
 
-pub fn read_sa_from_stockholm_file<T>(stockholm_file_path: &Path) -> ReadSeqAlign<T>
+pub fn read_sa_from_stockholm_file<T>(stockholm_file_path: &Path) -> ReadStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
-  let mut sa = ReadSeqAlign::<T>::new();
+  let mut sa = ReadStructAlign::<T>::new();
   let reader_2_stockholm_file = BufReader::new(File::open(stockholm_file_path).unwrap());
   let mut seqs = Vec::<Seq>::new();
   let mut bp_col_pairs = SparsePosMat::<T>::default();
@@ -1047,10 +1019,10 @@ where
   sa 
 }
 
-pub fn write_feature_score_sets_trained_posterior(feature_score_sets: &FeatureCountSetsPosterior) {
-  let mut writer_2_trained_feature_score_sets_file = BufWriter::new(File::create(TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR).unwrap());
-  let buf_4_writer_2_trained_feature_score_sets_file = format!("use FeatureCountSetsPosterior;\nimpl FeatureCountSetsPosterior {{\npub fn load_trained_score_params() -> FeatureCountSetsPosterior {{\nFeatureCountSetsPosterior {{\nbasepair_count_posterior: {}f32, align_count_posterior: {}f32\n}}\n}}\n}}", feature_score_sets.basepair_count_posterior, feature_score_sets.align_count_posterior);
-  let _ = writer_2_trained_feature_score_sets_file.write_all(buf_4_writer_2_trained_feature_score_sets_file.as_bytes());
+pub fn write_feature_scores_trained_posterior(feature_scores: &FeatureCountsPosterior) {
+  let mut writer_2_trained_feature_scores_file = BufWriter::new(File::create(TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR).unwrap());
+  let buf_4_writer_2_trained_feature_scores_file = format!("use FeatureCountsPosterior;\nimpl FeatureCountsPosterior {{\npub fn load_trained_score_params() -> FeatureCountsPosterior {{\nFeatureCountsPosterior {{\nbasepair_count_posterior: {}f32, align_count_posterior: {}f32\n}}\n}}\n}}", feature_scores.basepair_count_posterior, feature_scores.align_count_posterior);
+  let _ = writer_2_trained_feature_scores_file.write_all(buf_4_writer_2_trained_feature_scores_file.as_bytes());
 }
 
 pub fn write_accs(accs: &Accs, output_file_path: &Path) {
@@ -1062,60 +1034,7 @@ pub fn write_accs(accs: &Accs, output_file_path: &Path) {
   let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
 }
 
-pub fn get_bpp_mats_alifold<T>(sa: &MeaSeqAlign<T>, sa_file_path: &Path, fasta_records: &FastaRecords) -> SparseProbMats<T>
-where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-{
-  let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
-  let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
-  let sa_len = sa.cols.len();
-  let fasta_ids: Vec<FastaId> = sa.rna_ids.iter().map(|&x| fasta_records[x].fasta_id.clone()).collect();
-  let max_seq_id_len = fasta_ids.iter().map(|x| x.len()).max().unwrap();
-  for (i, &rna_id) in sa.rna_ids.iter().enumerate() {
-    let ref seq_id = fasta_records[rna_id].fasta_id;
-    buf_4_writer_2_sa_file.push_str(seq_id);
-    let mut clustal_row = vec![' ' as Char; max_seq_id_len - seq_id.len() + 2];
-    let mut sa_row = (0 .. sa_len).map(|x| {revert_char(sa.cols[x][i])}).collect::<Vec<Char>>();
-    clustal_row.append(&mut sa_row);
-    let clustal_row = unsafe {from_utf8_unchecked(&clustal_row)};
-    buf_4_writer_2_sa_file.push_str(&clustal_row);
-    buf_4_writer_2_sa_file.push_str("\n");
-  }
-  let _ = writer_2_sa_file.write_all(buf_4_writer_2_sa_file.as_bytes());
-  let _ = writer_2_sa_file.flush();
-  let sa_file_prefix = sa_file_path.file_stem().unwrap().to_str().unwrap();
-  let arg = format!("--id-prefix={}", sa_file_prefix);
-  let args = vec!["-p", sa_file_path.to_str().unwrap(), &arg, "--noPS", "--noDP"];
-  let _ = run_command("RNAalifold", &args, "Failed to run RNAalifold");
-  let num_of_rnas = sa.rna_ids.len();
-  let mut bpp_mats_alifold = vec![SparseProbMat::<T>::default(); num_of_rnas];
-  let cwd = env::current_dir().unwrap();
-  let output_file_path = cwd.join(String::from(sa_file_prefix) + "_0001_ali.out");
-  let output_file = BufReader::new(File::open(output_file_path.clone()).unwrap());
-  for (k, line) in output_file.lines().enumerate() {
-    if k == 0 {continue;}
-    let line = line.unwrap();
-    if !line.starts_with(" ") {continue;}
-    let substrings: Vec<&str> = line.split_whitespace().collect();
-    let i = substrings[0].parse::<usize>().unwrap() - 1;
-    let j = substrings[1].parse::<usize>().unwrap() - 1;
-    let mut bpp = String::from(substrings[3]);
-    bpp.pop();
-    let bpp = 0.01 * bpp.parse::<Prob>().unwrap();
-    if bpp == 0. {continue;}
-    let ref pos_maps = sa.pos_map_sets[i];
-    let ref pos_maps_2 = sa.pos_map_sets[j];
-    for (k, &rna_id) in sa.rna_ids.iter().enumerate() {
-      let pos_pair = (pos_maps[k], pos_maps_2[k]);
-      bpp_mats_alifold[rna_id].insert(pos_pair, bpp);
-    }
-  }
-  let _ = remove_file(sa_file_path);
-  let _ = remove_file(output_file_path);
-  bpp_mats_alifold
-}
-
-pub fn get_bpp_mat_alifold<T>(sa: &MeaSeqAlign<T>, sa_file_path: &Path, fasta_records: &FastaRecords) -> SparseProbMat<T>
+pub fn get_bpp_mat_alifold<T>(sa: &MeaStructAlign<T>, sa_file_path: &Path, fasta_records: &FastaRecords) -> SparseProbMat<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
