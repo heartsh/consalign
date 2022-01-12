@@ -10,7 +10,6 @@ use std::fs::create_dir;
 type MeaCssStr = MeaSsStr;
 
 const README_CONTENTS_2: &str = "# consalign.sth\nThis file type contains a predicted RNA structural alignment in the Stockholm format\n\n";
-const MAX_SEQ_LEN_OFFSET: usize = 100;
 
 fn main() {
   let args = env::args().collect::<Args>();
@@ -46,8 +45,6 @@ fn main() {
     ),
     "UINT",
   );
-  opts.optopt("g", "gamma", "A specific gamma parameter rather than a range of gamma parameters (for consensus secondary structure prediction)", "FLOAT");
-  opts.optopt("", "mix_weight", &format!("A mixture weight for three-way probabilistic consistency (Uses {} by default)", DEFAULT_MIX_WEIGHT), "FLOAT");
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
   opts.optflag(
     "s",
@@ -94,11 +91,6 @@ fn main() {
   };
   let produces_struct_profs = matches.opt_present("s");
   let outputs_probs = matches.opt_present("p") || produces_struct_profs;
-  let mix_weight = if matches.opt_present("mix_weight") {
-    matches.opt_str("mix_weight").unwrap().parse().unwrap()
-  } else {
-    DEFAULT_MIX_WEIGHT
-  };
   let output_dir_path = matches.opt_str("o").unwrap();
   let output_dir_path = Path::new(&output_dir_path);
   let fasta_file_reader = Reader::from_file(Path::new(&input_file_path)).unwrap();
@@ -116,18 +108,14 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  if max_seq_len + MAX_SEQ_LEN_OFFSET <= u8::MAX as usize {
-    multi_threaded_consalign::<u8>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, outputs_probs, mix_weight, input_file_path);
-  } else {
-    multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, outputs_probs, mix_weight, input_file_path);
-  }
+  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, outputs_probs, input_file_path);
 }
 
-fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, offset_4_max_gap_num: usize, min_bpp: Prob, produces_struct_profs: bool, output_dir_path: &Path, outputs_probs: bool, mix_weight: Prob, input_file_path: &Path)
+fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, offset_4_max_gap_num: usize, min_bpp: Prob, produces_struct_profs: bool, output_dir_path: &Path, outputs_probs: bool, input_file_path: &Path)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let (prob_mat_sets, align_prob_mat_pairs_with_rna_id_pairs) = consprob::<T>(thread_pool, fasta_records, min_bpp, T::from_usize(offset_4_max_gap_num).unwrap(), produces_struct_profs, true, mix_weight);
+  let (prob_mat_sets, align_prob_mat_pairs_with_rna_id_pairs) = consprob::<T>(thread_pool, fasta_records, min_bpp, T::from_usize(offset_4_max_gap_num).unwrap(), produces_struct_profs, true);
   if !output_dir_path.exists() {
     let _ = create_dir(output_dir_path);
   }
@@ -136,21 +124,49 @@ where
   }
   let align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
   let bpp_mats: SparseProbMats<T> = prob_mat_sets.iter().map(|x| x.bpp_mat.clone()).collect();
-  compute_and_write_mea_sta(&output_dir_path, &fasta_records, &align_prob_mats_with_rna_id_pairs, &bpp_mats, &input_file_path);
+  let mut candidates = Vec::new();
+  for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
+    let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
+    for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
+      let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
+      let mut feature_scores = FeatureCountsPosterior::new(0.);
+      feature_scores.basepair_count_posterior = basepair_count_posterior;
+      feature_scores.align_count_posterior = align_count_posterior;
+      candidates.push((feature_scores, MeaStructAlign::<T>::new()));
+    }
+  }
+  let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
+  thread_pool.scoped(|scope| {
+    let ref ref_2_align_prob_mats_with_rna_id_pairs = align_prob_mats_with_rna_id_pairs;
+    let ref ref_2_bpp_mats = bpp_mats;
+    for candidate in &mut candidates {
+      let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, candidate.0.basepair_count_posterior, candidate.0.align_count_posterior));
+      scope.execute(move || {
+        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, &sa_file_path);
+      })
+    }
+  });
+  let mut max_acc = NEG_INFINITY;
+  let mut argmax_params = FeatureCountsPosterior::new(NEG_INFINITY);
+  let mut argmax_align = MeaStructAlign::<T>::new();
+  for candidate in &candidates {
+    if candidate.1.acc > max_acc {
+      argmax_params = candidate.0.clone();
+      argmax_align = candidate.1.clone();
+      max_acc = candidate.1.acc;
+    }
+  }
+  compute_and_write_mea_sta(&output_dir_path, fasta_records, &argmax_params, &argmax_align);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn compute_and_write_mea_sta<T>(output_dir_path: &Path, fasta_records: &FastaRecords, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, input_file_path: &Path)
+fn compute_and_write_mea_sta<T>(output_dir_path: &Path, fasta_records: &FastaRecords, feature_scores: &FeatureCountsPosterior, sa: &MeaStructAlign<T>)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let feature_score_sets = FeatureCountsPosterior::load_trained_score_params();
-  let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
-  let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
-  let sa = consalign::<T>(fasta_records, align_prob_mats_with_rna_id_pairs, bpp_mats, &feature_score_sets, &sa_file_path);
-  let output_file_path = output_dir_path.join(&String::from("consalign.sth"));
+  let output_file_path = output_dir_path.join(&format!("consalign_g1={}_g2={}.sth", feature_scores.basepair_count_posterior, feature_scores.align_count_posterior));
   write_stockholm_file(&output_file_path, &sa, fasta_records);
 }
 

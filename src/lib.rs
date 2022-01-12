@@ -3,8 +3,6 @@ extern crate num_cpus;
 extern crate petgraph;
 extern crate rand;
 
-pub mod trained_feature_scores;
-
 pub use consprob::*;
 pub use petgraph::{Graph, Directed, Outgoing};
 pub use petgraph::graph::{DefaultIx, NodeIndex};
@@ -31,16 +29,11 @@ pub struct MeaStructAlign<T> {
   pub pos_map_sets: PosMapSets<T>,
   pub rna_ids: RnaIds,
   pub ea: Mea,
+  pub acc: Mea,
   pub bp_col_pairs: SparsePosMat<T>,
   pub mix_bpp_mat: SparseProbMat<T>,
+  pub mix_bpp_mat_origin: SparseProbMat<T>,
   pub align_probs_avg: Probs,
-}
-#[derive(Clone)]
-pub struct ReadStructAlign<T> {
-  pub cols: Cols,
-  pub bp_col_pairs: SparsePosMat<T>,
-  pub pos_map_sets: PosMapSets<T>,
-  pub fasta_records: FastaRecords,
 }
 pub type SparsePosMat<T> = HashSet<PosPair<T>>;
 pub type RnaIds = Vec<RnaId>;
@@ -54,63 +47,13 @@ pub type ColsWithCols<T> = HashMap<T, T>;
 pub type MeaMatsWithPosPairs<T> = HashMap<PosPair<T>, SparseProbMat<T>>;
 pub type ColSetsWithCols<T> = HashMap<T, PosProbSeq<T>>;
 pub type PosProbSeq<T> = Vec<(T, Prob)>;
-#[derive(Clone)]
-pub struct TrainDatumPosterior<T> {
-  pub fasta_records: FastaRecords,
-  pub observed_struct_align: ReadStructAlign<T>,
-  pub argmax: MeaStructAlign<T>,
-  pub align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T>,
-  pub bpp_mats: SparseProbMats<T>,
-  pub sa_file_path: String,
-}
-pub type TrainDataPosterior<T> = Vec<TrainDatumPosterior<T>>;
 #[derive(Clone, Debug)]
 pub struct FeatureCountsPosterior {
   pub basepair_count_posterior: FeatureCount,
   pub align_count_posterior: FeatureCount,
 }
-pub type Accs = Vec<(FeatureCountsPosterior, Prob)>;
 pub type SparseProbMats<T> = Vec<SparseProbMat<T>>;
 pub type ProbMatsWithRnaIdPairs<T> = HashMap<RnaIdPair, SparseProbMat<T>>;
-
-impl<T: Hash + Clone + Unsigned + PrimInt + FromPrimitive + Integer + Ord + Sync + Send + Display> TrainDatumPosterior<T> {
-  pub fn origin() -> TrainDatumPosterior<T> {
-    TrainDatumPosterior {
-      fasta_records: FastaRecords::new(),
-      observed_struct_align: ReadStructAlign::<T>::new(),
-      argmax: MeaStructAlign::<T>::new(),
-      align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs::<T>::default(),
-      bpp_mats: SparseProbMats::<T>::default(),
-      sa_file_path: String::new(),
-    }
-  }
-
-  pub fn new(input_file_path: &Path, min_bpp: Prob, offset_4_max_gap_num: T, thread_pool: &mut Pool, mix_weight: Prob) -> TrainDatumPosterior<T> {
-    let read_struct_align = read_sa_from_stockholm_file(input_file_path);
-    let (prob_mat_sets, align_prob_mat_pairs_with_rna_id_pairs) = consprob::<T>(
-      thread_pool,
-      &read_struct_align.fasta_records,
-      min_bpp,
-      offset_4_max_gap_num,
-      false,
-      true,
-      mix_weight,
-    );
-    let align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
-    let bpp_mats: SparseProbMats<T> = prob_mat_sets.iter().map(|x| x.bpp_mat.clone()).collect();
-    let parent = input_file_path.parent().unwrap();
-    let prefix = input_file_path.file_stem().unwrap();
-    let sa_file_path = String::from(parent.join(&format!("{}_consalign.aln", prefix.to_str().unwrap())).to_str().unwrap());
-    TrainDatumPosterior {
-      fasta_records: read_struct_align.fasta_records.clone(),
-      observed_struct_align: read_struct_align,
-      argmax: MeaStructAlign::<T>::new(),
-      align_prob_mats_with_rna_id_pairs: align_prob_mats_with_rna_id_pairs,
-      bpp_mats: bpp_mats,
-      sa_file_path: sa_file_path,
-    }
-  }
-}
 
 impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display + Eq> MeaStructAlign<T> {
   pub fn new() -> MeaStructAlign<T> {
@@ -121,8 +64,10 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       pos_map_sets: PosMapSets::<T>::new(),
       rna_ids: RnaIds::new(),
       ea: 0.,
+      acc: 0.,
       bp_col_pairs: SparsePosMat::<T>::default(),
       mix_bpp_mat: SparseProbMat::<T>::default(),
+      mix_bpp_mat_origin: SparseProbMat::<T>::default(),
       align_probs_avg: Probs::new(),
     }
   }
@@ -190,9 +135,8 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
           }
         }
         let mut bpp_avg = bpp_sum / num_of_rnas as Prob;
-        if bpp_alifold > NEG_INFINITY {
-          bpp_avg = (bpp_avg + bpp_alifold) / 2.;
-        }
+        bpp_avg = (bpp_avg + bpp_alifold) / 2.;
+        self.mix_bpp_mat_origin.insert(pos_pair, bpp_avg);
         let weight = feature_scores.basepair_count_posterior * bpp_avg - 1.;
         if weight >= 0. {
           let pos_pair = (T::from_usize(i).unwrap(), T::from_usize(j).unwrap());
@@ -227,16 +171,54 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       self.align_probs_avg.push(align_prob_sum);
     }
   }
-}
 
-impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display + Hash> ReadStructAlign<T> {
-  pub fn new() -> ReadStructAlign<T> {
-    ReadStructAlign {
-      cols: Cols::new(),
-      bp_col_pairs: SparsePosMat::<T>::default(),
-      pos_map_sets: PosMapSets::<T>::new(),
-      fasta_records: FastaRecords::new(),
+  pub fn set_acc(&mut self, align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>) {
+    let (mut pt, mut nt, mut pf, mut nf): (Mea, Mea, Mea, Mea) = (0., 0., 0., 0.);
+    let sa_len = self.cols.len();
+    for i in 0 .. sa_len {
+      let short_i = T::from_usize(i).unwrap();
+      for j in 0 .. sa_len {
+        let short_j = T::from_usize(j).unwrap();
+        let col_pair = (short_i, short_j);
+        let bpp = match self.mix_bpp_mat_origin.get(&col_pair) {
+          Some(&bpp) => {bpp},
+          None => {0.},
+        };
+        if self.bp_col_pairs.contains(&col_pair) {
+          pt += bpp;
+          pf += 1. - bpp;
+        } else {
+          nt += 1. - bpp;
+          nf += bpp;
+        }
+      }
     }
+    let mcc = (pt * nt - pf * nf) / ((pt + pf) * (pt + nf) * (nt + pf) * (nt + nf)).sqrt();
+    let num_of_rnas = self.rna_ids.len();
+    let (mut pt, mut total): (Mea, Mea) = (0., 0.);
+    for i in 0 .. num_of_rnas {
+      let rna_id = self.rna_ids[i];
+      for j in i + 1 .. num_of_rnas {
+        let rna_id_2 = self.rna_ids[j];
+        let ordered_rna_id_pair = if rna_id < rna_id_2 {(rna_id, rna_id_2)} else {(rna_id_2, rna_id)};
+        let ref align_prob_mat = align_prob_mats_with_rna_id_pairs[&ordered_rna_id_pair];
+        for k in 0 .. sa_len {
+          let ref pos_maps = self.pos_map_sets[k];
+          let pos = pos_maps[i];
+          let pos_2 = pos_maps[j];
+          let pos_pair = if rna_id < rna_id_2 {(pos, pos_2)} else {(pos_2, pos)};
+          match align_prob_mat.get(&pos_pair) {
+            Some(&align_prob) => {
+              pt += align_prob;
+            }, None => {},
+          }
+          total += 1.;
+        }
+      }
+    }
+    let sps = pt / total;
+    let acc = (mcc * sps).sqrt();
+    self.acc = acc;
   }
 }
 
@@ -250,14 +232,13 @@ impl FeatureCountsPosterior {
 }
 
 pub const GAP: Char = '-' as Char;
-pub const MAX_ITER_REFINE: usize = 20;
-pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str = "../src/trained_feature_scores.rs";
+pub const TRAINED_FEATURE_SCORE_SETS_FILE_STEM_POSTERIOR: &'static str = "../src/trained_feature_scores";
 pub const MIN_LOG_GAMMA_BASEPAIR: i32 = 0;
-pub const MIN_LOG_GAMMA_ALIGN: i32 = 2;
+pub const MIN_LOG_GAMMA_ALIGN: i32 = MIN_LOG_GAMMA_BASEPAIR;
 pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 5;
-pub const MAX_LOG_GAMMA_ALIGN: i32 = MAX_LOG_GAMMA_BASEPAIR;
+pub const MAX_LOG_GAMMA_ALIGN: i32 = 10;
 pub const BRACKET_PAIRS: [(char, char); 9] = [('(', ')'), ('<', '>'), ('{', '}'), ('[', ']'), ('A', 'a'), ('B', 'b'), ('C', 'c'), ('D', 'd'), ('E', 'e'), ];
-pub const DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN: usize = 4 * DEFAULT_OFFSET_4_MAX_GAP_NUM;
+pub const DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN: usize = DEFAULT_OFFSET_4_MAX_GAP_NUM;
 pub const DEFAULT_MIN_BPP_ALIGN: Prob = 0.04;
 
 pub fn consalign<T>(
@@ -345,6 +326,7 @@ where
     *pos_maps = pairs.iter().map(|x| x.0).collect();
   }
   mea_struct_align.rna_ids.sort();
+  mea_struct_align.set_acc(align_prob_mats_with_rna_id_pairs);
   mea_struct_align
 }
 
@@ -801,237 +783,6 @@ where
     }
   }
   sa.ea = mea_mat[0][sa_len.to_usize().unwrap() - 1];
-}
-
-pub fn constrain_posterior<'a, T>(
-  thread_pool: &mut Pool,
-  train_data: &mut TrainDataPosterior<T>,
-  output_file_path: &Path,
-)
-where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-{
-  let mut max_acc = NEG_INFINITY;
-  let mut argmax = FeatureCountsPosterior::new(NEG_INFINITY);
-  let mut accs = Vec::new();
-  for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
-    let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
-    for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
-      let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
-      let mut feature_scores = FeatureCountsPosterior::new(0.);
-      feature_scores.basepair_count_posterior = basepair_count_posterior;
-      feature_scores.align_count_posterior = align_count_posterior;
-      thread_pool.scoped(|scope| {
-        let ref ref_2_feature_scores = feature_scores;
-        for train_datum in train_data.iter_mut() {
-          let ref fasta_records = train_datum.fasta_records;
-          let ref align_prob_mats_with_rna_id_pairs = train_datum.align_prob_mats_with_rna_id_pairs;
-          let ref bpp_mats = train_datum.bpp_mats;
-          let ref mut argmax = train_datum.argmax;
-          let sa_file_path = Path::new(&train_datum.sa_file_path);
-          scope.execute(move || {
-            *argmax = consalign::<T>(
-              fasta_records,
-              align_prob_mats_with_rna_id_pairs,
-              bpp_mats,
-              ref_2_feature_scores,
-              sa_file_path,
-            );
-          });
-        }
-      });
-      let mcc = get_mcc(train_data);
-      let sps = get_sps(train_data);
-      println!("basepair_score: {}, align_score: {}, mcc: {}, sps: {}", feature_scores.basepair_count_posterior, feature_scores.align_count_posterior, mcc, sps);
-      let acc = (mcc * sps).sqrt();
-      accs.push((feature_scores.clone(), acc));
-      if acc > max_acc {
-        max_acc = acc;
-        argmax = feature_scores;
-      }
-    }
-  }
-  write_feature_scores_trained_posterior(&argmax);
-  write_accs(&accs, output_file_path);
-}
-
-pub fn get_mcc<T>(train_data: &TrainDataPosterior<T>) -> Prob
-where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-{
-  let (mut pt, mut nt, mut pf, mut nf): (Prob, Prob, Prob, Prob) = (0., 0., 0., 0.);
-  for train_datum in train_data {
-    let ref ref_struct_align = train_datum.observed_struct_align;
-    let ref argmax = train_datum.argmax;
-    let ref fasta_records = train_datum.fasta_records;
-    let num_of_rnas = train_datum.observed_struct_align.cols[0].len();
-    for i in 0 .. num_of_rnas {
-      let mut mat_ref = SparsePosMat::<T>::default();
-      for bp_col_pair in &ref_struct_align.bp_col_pairs {
-        let pos_map_pair = (ref_struct_align.pos_map_sets[bp_col_pair.0.to_usize().unwrap()][i], ref_struct_align.pos_map_sets[bp_col_pair.1.to_usize().unwrap()][i]);
-        mat_ref.insert(pos_map_pair);
-      }
-      let mut mat_max = SparsePosMat::<T>::default();
-      for bp_col_pair in &argmax.bp_col_pairs {
-        let pos_map_pair = (argmax.pos_map_sets[bp_col_pair.0.to_usize().unwrap()][i], argmax.pos_map_sets[bp_col_pair.1.to_usize().unwrap()][i]);
-        mat_max.insert(pos_map_pair);
-      }
-      let ref fasta_record = fasta_records[i];
-      let seq_len = fasta_record.seq.len() + 2;
-      for i in 1 .. seq_len - 1 {
-        let short_i = T::from_usize(i).unwrap();
-        for j in i + 1 .. seq_len - 1 {
-          let short_j = T::from_usize(j).unwrap();
-          let pos_pair = (short_i, short_j);
-          let bin_ref = mat_ref.contains(&pos_pair);
-          let bin_max = mat_max.contains(&pos_pair);
-          if bin_ref == bin_max {
-            if bin_max {
-              pt += 1.;
-            } else {
-              nt += 1.;
-            }
-          } else {
-            if bin_max {
-              pf += 1.;
-            } else {
-              nf += 1.;
-            }
-          }
-        }
-      }
-    }
-  }
-  let mcc = (pt * nt - pf * nf) / ((pt + pf) * (pt + nf) * (nt + pf) * (nt + nf)).sqrt();
-  mcc
-}
-
-pub fn get_sps<T>(train_data: &TrainDataPosterior<T>) -> Prob
-where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-{
-  let (mut tp, mut total): (Prob, Prob) = (0., 0.);
-  for train_datum in train_data {
-    let ref ref_struct_align = train_datum.observed_struct_align;
-    let ref argmax = train_datum.argmax;
-    let sa_len_ref = train_datum.observed_struct_align.cols.len();
-    let sa_len_max = train_datum.argmax.cols.len();
-    let num_of_rnas = train_datum.observed_struct_align.cols[0].len();
-    for i in 0 .. num_of_rnas {
-      for j in i + 1 .. num_of_rnas {
-        let mut mat_ref = SparsePosMat::<T>::default();
-        let mut mat_max = SparsePosMat::<T>::default();
-        for k in 0 .. sa_len_ref {
-          let ref pos_maps_ref = ref_struct_align.pos_map_sets[k];
-          let pos_map_ref = pos_maps_ref[i];
-          let pos_map_ref_2 = pos_maps_ref[j];
-          let pos_map_pair_ref = (pos_map_ref, pos_map_ref_2);
-          mat_ref.insert(pos_map_pair_ref);
-        }
-        for k in 0 .. sa_len_max {
-          let ref pos_maps_max = argmax.pos_map_sets[k];
-          let pos_map_max = pos_maps_max[i];
-          let pos_map_max_2 = pos_maps_max[j];
-          let pos_map_pair_max = (pos_map_max, pos_map_max_2);
-          mat_max.insert(pos_map_pair_max);
-        }
-        for pos_pair_ref in &mat_ref {
-          for pos_pair_max in &mat_max {
-            if *pos_pair_ref == *pos_pair_max {
-              tp += 1.;
-            }
-          }
-          total += 1.;
-        }
-      }
-    }
-  }
-  let sps = tp / total;
-  sps
-}
-
-pub fn read_sa_from_stockholm_file<T>(stockholm_file_path: &Path) -> ReadStructAlign<T>
-where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-{
-  let mut sa = ReadStructAlign::<T>::new();
-  let reader_2_stockholm_file = BufReader::new(File::open(stockholm_file_path).unwrap());
-  let mut seqs = Vec::<Seq>::new();
-  let mut bp_col_pairs = SparsePosMat::<T>::default();
-  let mut seq_ids = SeqIds::new();
-  for string in reader_2_stockholm_file.lines() {
-    let string = string.unwrap();
-    if string.starts_with("#=GC SS_cons") {
-      let substrings: Vec<&str> = string.split_whitespace().collect();
-      let ref css = substrings[2];
-      let mut stack = Vec::new();
-      for (left, right) in BRACKET_PAIRS {
-        for (i, c) in css.chars().enumerate() {
-          if c == left {
-            stack.push(i);
-          } else if c == right {
-            let i = T::from_usize(i).unwrap();
-            let pos = stack.pop().unwrap();
-            let pos = T::from_usize(pos).unwrap();
-            bp_col_pairs.insert((pos, i));
-          }
-        }
-      }
-    }
-    if string.len() == 0 || string.starts_with("#") {
-      continue;
-    } else if string.starts_with("//") {
-      break;
-    }
-    let substrings: Vec<&str> = string.split_whitespace().collect();
-    let seq_id = substrings[0];
-    seq_ids.push(SeqId::from(seq_id));
-    let seq = substrings[1];
-    let seq = seq.chars().map(|x| convert_sa_char(x as u8)).collect();
-    seqs.push(seq);
-  }
-  sa.bp_col_pairs = bp_col_pairs;
-  let align_len = seqs[0].len();
-  for i in 0 .. align_len {
-    let col = seqs.iter().map(|x| x[i]).collect();
-    sa.cols.push(col);
-  }
-  let num_of_rnas = sa.cols[0].len();
-  let mut seq_lens = vec![0 as usize; num_of_rnas];
-  sa.pos_map_sets = vec![vec![T::zero(); num_of_rnas]; align_len];
-  let mut fasta_records = vec![FastaRecord::origin(); num_of_rnas];
-  for i in 0 .. align_len {
-    for j in 0 .. num_of_rnas {
-      let base = sa.cols[i][j];
-      if base != PSEUDO_BASE {
-        fasta_records[j].seq.push(base);
-        seq_lens[j] += 1;
-        sa.pos_map_sets[i][j] = T::from_usize(seq_lens[j]).unwrap();
-      }
-    }
-  }
-  for i in 0 .. num_of_rnas {
-    fasta_records[i].seq.insert(0, PSEUDO_BASE);
-    fasta_records[i].seq.push(PSEUDO_BASE);
-    fasta_records[i].fasta_id = seq_ids[i].clone();
-  }
-  sa.fasta_records = fasta_records;
-  sa 
-}
-
-pub fn write_feature_scores_trained_posterior(feature_scores: &FeatureCountsPosterior) {
-  let mut writer_2_trained_feature_scores_file = BufWriter::new(File::create(TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR).unwrap());
-  let buf_4_writer_2_trained_feature_scores_file = format!("use FeatureCountsPosterior;\nimpl FeatureCountsPosterior {{\npub fn load_trained_score_params() -> FeatureCountsPosterior {{\nFeatureCountsPosterior {{\nbasepair_count_posterior: {}f32, align_count_posterior: {}f32\n}}\n}}\n}}", feature_scores.basepair_count_posterior, feature_scores.align_count_posterior);
-  let _ = writer_2_trained_feature_scores_file.write_all(buf_4_writer_2_trained_feature_scores_file.as_bytes());
-}
-
-pub fn write_accs(accs: &Accs, output_file_path: &Path) {
-  let mut writer_2_output_file = BufWriter::new(File::create(output_file_path).unwrap());
-  let mut buf_4_writer_2_output_file = String::new();
-  for acc in accs {
-    buf_4_writer_2_output_file.push_str(&format!("{},{},{}\n", acc.0.basepair_count_posterior, acc.0.align_count_posterior, acc.1));
-  }
-  let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
 }
 
 pub fn get_bpp_mat_alifold<T>(sa: &MeaStructAlign<T>, sa_file_path: &Path, fasta_records: &FastaRecords) -> SparseProbMat<T>
