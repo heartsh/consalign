@@ -188,12 +188,11 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
           pt += bpp;
           pf += 1. - bpp;
         } else {
-          nt += 1. - bpp;
           nf += bpp;
         }
       }
     }
-    let mcc = (pt * nt - pf * nf) / ((pt + pf) * (pt + nf) * (nt + pf) * (nt + nf)).sqrt();
+    let f1_score = 2. * pt / (2. * pt + pf + nf);
     let num_of_rnas = self.rna_ids.len();
     let (mut pt, mut total): (Mea, Mea) = (0., 0.);
     for i in 0 .. num_of_rnas {
@@ -217,7 +216,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       }
     }
     let sps = pt / total;
-    let acc = (mcc * sps).sqrt();
+    let acc = (f1_score * sps).sqrt();
     self.acc = acc;
   }
 }
@@ -235,19 +234,20 @@ pub const GAP: Char = '-' as Char;
 pub const TRAINED_FEATURE_SCORE_SETS_FILE_STEM_POSTERIOR: &'static str = "../src/trained_feature_scores";
 pub const MIN_LOG_GAMMA_BASEPAIR: i32 = 0;
 pub const MIN_LOG_GAMMA_ALIGN: i32 = MIN_LOG_GAMMA_BASEPAIR;
-pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 5;
-pub const MAX_LOG_GAMMA_ALIGN: i32 = 10;
+pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 4;
+pub const MAX_LOG_GAMMA_ALIGN: i32 = 7;
 pub const BRACKET_PAIRS: [(char, char); 9] = [('(', ')'), ('<', '>'), ('{', '}'), ('[', ']'), ('A', 'a'), ('B', 'b'), ('C', 'c'), ('D', 'd'), ('E', 'e'), ];
 pub const DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN: usize = DEFAULT_OFFSET_4_MAX_GAP_NUM;
 pub const DEFAULT_MIN_BPP_ALIGN: Prob = 0.04;
 
-pub fn consalign<T>(
+pub fn build_guide_tree<T>(
   fasta_records: &FastaRecords,
   align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>,
   bpp_mats: &SparseProbMats<T>,
   feature_scores: &FeatureCountsPosterior,
   sa_file_path: &Path,
-) -> MeaStructAlign<T>
+  thread_pool: &mut Pool,
+) -> (ProgressiveTree, NodeIndex<DefaultIx>)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -257,16 +257,25 @@ where
   let mut cluster_sizes = ClusterSizes::default();
   let mut node_indexes = NodeIndexes::default();
   for i in 0 .. num_of_rnas {
-    let ref seq = fasta_records[i].seq;
-    let ref sparse_bpp_mat = bpp_mats[i];
-    let converted_seq = convert_seq(seq, i, sparse_bpp_mat);
     for j in i + 1 .. num_of_rnas {
+      mea_mat.insert((i, j), NEG_INFINITY);
+    }
+  }
+  thread_pool.scoped(|scope| {
+    for (&(i, j), ea) in mea_mat.iter_mut() {
+      let ref seq = fasta_records[i].seq;
+      let ref sparse_bpp_mat = bpp_mats[i];
+      let converted_seq = convert_seq(seq, i, sparse_bpp_mat);
       let ref seq_2 = fasta_records[j].seq;
       let ref sparse_bpp_mat_2 = bpp_mats[j];
       let converted_seq_2 = convert_seq(seq_2, j, sparse_bpp_mat_2);
-      let pair_struct_align = get_mea_align(&(&converted_seq, &converted_seq_2), align_prob_mats_with_rna_id_pairs, bpp_mats, &feature_scores);
-      mea_mat.insert((i, j), pair_struct_align.ea);
+      scope.execute(move || {
+        let pair_struct_align = get_mea_align(&(&converted_seq, &converted_seq_2), align_prob_mats_with_rna_id_pairs, bpp_mats, &feature_scores);
+        *ea = pair_struct_align.ea;
+      });
     }
+  });
+  for i in 0 .. num_of_rnas {
     let node_index = progressive_tree.add_node(i);
     cluster_sizes.insert(i, 1);
     node_indexes.insert(i, node_index);
@@ -311,6 +320,21 @@ where
     new_cluster_id += 1;
   }
   let root = node_indexes[&(new_cluster_id - 1)];
+  (progressive_tree, root)
+}
+
+pub fn consalign<T>(
+  fasta_records: &FastaRecords,
+  align_prob_mats_with_rna_id_pairs: &ProbMatsWithRnaIdPairs<T>,
+  bpp_mats: &SparseProbMats<T>,
+  feature_scores: &FeatureCountsPosterior,
+  sa_file_path: &Path,
+  progressive_tree: &ProgressiveTree,
+  root: NodeIndex<DefaultIx>,
+) -> MeaStructAlign<T>
+where
+  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+{
   let mut mea_struct_align = recursive_mea_struct_align(&progressive_tree, root, align_prob_mats_with_rna_id_pairs, &fasta_records, bpp_mats, &feature_scores);
   let bpp_mat_alifold = get_bpp_mat_alifold(&mea_struct_align, sa_file_path, fasta_records);
   mea_struct_align.set_mix_bpp_mat(bpp_mats, &bpp_mat_alifold, &feature_scores);
