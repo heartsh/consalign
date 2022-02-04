@@ -125,10 +125,27 @@ where
   let align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
   let bpp_mats: SparseProbMats<T> = prob_mat_sets.iter().map(|x| x.bpp_mat.clone()).collect();
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
-  let mut feature_scores = FeatureCountsPosterior::new(2.);
-  let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, feature_scores.basepair_count_posterior, feature_scores.align_count_posterior));
-  let (guide_tree, root) = build_guide_tree::<T>(fasta_records, &align_prob_mats_with_rna_id_pairs, &bpp_mats, &feature_scores, &sa_file_path, thread_pool);
+  /* let mut min_param_bp = MIN_LOG_GAMMA_BASEPAIR;
+  for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
+    let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
+    let num = estimate_significant_bp_num::<T>(&bpp_mats, fasta_records, basepair_count_posterior);
+    if num >= MIN_SIGNIFICANT_BP_NUM {
+      min_param_bp = log_gamma_basepair;
+      break;
+    }
+  }
+  let mut min_param_align = MIN_LOG_GAMMA_ALIGN;
+  for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
+    let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
+    let num = estimate_significant_align_num::<T>(&align_prob_mats_with_rna_id_pairs, fasta_records, align_count_posterior);
+    if num >= MIN_SIGNIFICANT_ALIGN_NUM {
+      min_param_align = log_gamma_align;
+      break;
+    }
+  } */
+  // println!("min_param_bp: {}, min_param_align: {}", min_param_bp, min_param_align);
   let mut candidates = Vec::new();
+  // for log_gamma_basepair in min_param_bp .. MAX_LOG_GAMMA_BASEPAIR + 1 {
   for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
     let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
     for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
@@ -144,9 +161,8 @@ where
     let ref ref_2_bpp_mats = bpp_mats;
     for candidate in &mut candidates {
       let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, candidate.0.basepair_count_posterior, candidate.0.align_count_posterior));
-      let ref ref_2_guide_tree = guide_tree;
       scope.execute(move || {
-        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, &sa_file_path, ref_2_guide_tree, root);
+        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, &sa_file_path);
       })
     }
   });
@@ -160,6 +176,52 @@ where
       max_acc = candidate.1.acc;
     }
   }
+  let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, argmax_params.basepair_count_posterior, argmax_params.align_count_posterior));
+  let bpp_mat_alifold = get_bpp_mat_alifold(&argmax_align, &sa_file_path, fasta_records);
+  argmax_align.set_mix_bpp_mat(&bpp_mats, &bpp_mat_alifold, &argmax_params);
+  consalifold(&mut argmax_align);
+  for col in argmax_align.cols.iter_mut() {
+    let mut pairs: Vec<(Base, RnaId)> = col.iter().zip(argmax_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
+    pairs.sort_by_key(|x| x.1.clone());
+    *col = pairs.iter().map(|x| x.0).collect();
+  }
+  for pos_maps in argmax_align.pos_map_sets.iter_mut() {
+    let mut pairs: Vec<(T, RnaId)> = pos_maps.iter().zip(argmax_align.rna_ids.iter()).map(|(&x, &y)| (x, y)).collect();
+    pairs.sort_by_key(|x| x.1);
+    *pos_maps = pairs.iter().map(|x| x.0).collect();
+  }
+  argmax_align.rna_ids.sort();
+  /* let mut candidates = Vec::new();
+  for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
+    let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
+    for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
+      let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
+      let mut feature_scores = FeatureCountsPosterior::new(0.);
+      feature_scores.basepair_count_posterior = basepair_count_posterior;
+      feature_scores.align_count_posterior = align_count_posterior;
+      candidates.push((feature_scores, MeaStructAlign::<T>::new()));
+    }
+  }
+  thread_pool.scoped(|scope| {
+    let ref ref_2_align_prob_mats_with_rna_id_pairs = align_prob_mats_with_rna_id_pairs;
+    let ref ref_2_bpp_mats = bpp_mats;
+    for candidate in &mut candidates {
+      let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, candidate.0.basepair_count_posterior, candidate.0.align_count_posterior));
+      scope.execute(move || {
+        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, &sa_file_path);
+      })
+    }
+  });
+  let mut max_acc = NEG_INFINITY;
+  let mut argmax_params = FeatureCountsPosterior::new(NEG_INFINITY);
+  let mut argmax_align = MeaStructAlign::<T>::new();
+  for candidate in &candidates {
+    if candidate.1.acc > max_acc {
+      argmax_params = candidate.0.clone();
+      argmax_align = candidate.1.clone();
+      max_acc = candidate.1.acc;
+    }
+  } */
   compute_and_write_mea_sta(&output_dir_path, fasta_records, &argmax_params, &argmax_align);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
