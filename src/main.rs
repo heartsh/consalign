@@ -10,7 +10,6 @@ use std::fs::create_dir;
 type MeaCssStr = MeaSsStr;
 
 const README_CONTENTS_2: &str = "# consalign.sth\nThis file type contains a predicted RNA structural alignment in the Stockholm format\n\n";
-const MIX_COEFFS: [Prob; 11] = [0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
 fn main() {
   let args = env::args().collect::<Args>();
@@ -27,24 +26,6 @@ fn main() {
     "output_dir_path",
     "A path to an output directory",
     "STR",
-  );
-  opts.optopt(
-    "",
-    "min_base_pair_prob",
-    &format!(
-      "A minimum base-pairing-probability (Uses {} by default)",
-      DEFAULT_MIN_BPP_ALIGN
-    ),
-    "FLOAT",
-  );
-  opts.optopt(
-    "",
-    "offset_4_max_gap_num",
-    &format!(
-      "An offset for maximum numbers of gaps (Uses {} by default)",
-      DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN
-    ),
-    "UINT",
   );
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
   opts.optflag(
@@ -67,24 +48,6 @@ fn main() {
   }
   let input_file_path = matches.opt_str("i").unwrap();
   let input_file_path = Path::new(&input_file_path);
-  let min_bpp = if matches.opt_present("min_base_pair_prob") {
-    matches
-      .opt_str("min_base_pair_prob")
-      .unwrap()
-      .parse()
-      .unwrap()
-  } else {
-    DEFAULT_MIN_BPP_ALIGN
-  };
-  let offset_4_max_gap_num = if matches.opt_present("offset_4_max_gap_num") {
-    matches
-      .opt_str("offset_4_max_gap_num")
-      .unwrap()
-      .parse()
-      .unwrap()
-  } else {
-    DEFAULT_OFFSET_4_MAX_GAP_NUM_ALIGN
-  };
   let num_of_threads = if matches.opt_present("t") {
     matches.opt_str("t").unwrap().parse().unwrap()
   } else {
@@ -109,110 +72,100 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, offset_4_max_gap_num, min_bpp, produces_struct_profs, output_dir_path, outputs_probs, input_file_path);
+  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path);
 }
 
-fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, offset_4_max_gap_num: usize, min_bpp: Prob, produces_struct_profs: bool, output_dir_path: &Path, outputs_probs: bool, input_file_path: &Path)
+fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
-  let (prob_mat_sets, align_prob_mat_pairs_with_rna_id_pairs) = consprob::<T>(thread_pool, fasta_records, min_bpp, T::from_usize(offset_4_max_gap_num).unwrap(), produces_struct_profs, true);
+  let num_of_fasta_records = fasta_records.len();
+  let mut bpp_mats = vec![SparseProbMat::<T>::new(); num_of_fasta_records];
+  thread_pool.scoped(|scope| {
+    for (bpp_mat, fasta_record) in multizip((bpp_mats.iter_mut(), fasta_records.iter())) {
+      let seq_len = fasta_record.seq.len();
+      scope.execute(move || {
+        let (obtained_bpp_mat, _) = mccaskill_algo(&fasta_record.seq[1 .. seq_len - 1], true);
+        *bpp_mat = remove_small_bpps_from_bpp_mat::<T>(&obtained_bpp_mat, 0.);
+      });
+    }
+  });
+  let mut align_prob_mats_with_rna_id_pairs = ProbMatsWithRnaIdPairs::default();
+  let mut insert_prob_set_pairs_with_rna_id_pairs = ProbSetPairsWithRnaIdPairs::default();
+  for rna_id_1 in 0 .. num_of_fasta_records {
+    for rna_id_2 in rna_id_1 + 1 .. num_of_fasta_records {
+      let rna_id_pair = (rna_id_1, rna_id_2);
+      align_prob_mats_with_rna_id_pairs.insert(rna_id_pair, ProbMat::new());
+      insert_prob_set_pairs_with_rna_id_pairs.insert(rna_id_pair, (Probs::new(), Probs::new()));
+    }
+  }
+  thread_pool.scoped(|scope| {
+    for (rna_id_pair, align_prob_mat) in align_prob_mats_with_rna_id_pairs.iter_mut() {
+      let seq_pair = (&fasta_records[rna_id_pair.0].seq[..], &fasta_records[rna_id_pair.1].seq[..]);
+      scope.execute(move || {
+        *align_prob_mat = durbin_algo(&seq_pair);
+      });
+    }
+  });
+  thread_pool.scoped(|scope| {
+    for (rna_id_pair, insert_prob_set_pair) in insert_prob_set_pairs_with_rna_id_pairs.iter_mut() {
+      let ref align_prob_mat = align_prob_mats_with_rna_id_pairs[rna_id_pair];
+      scope.execute(move || {
+        *insert_prob_set_pair = get_insert_prob_set_pair(align_prob_mat);
+      });
+    }
+  });
   if !output_dir_path.exists() {
     let _ = create_dir(output_dir_path);
   }
-  if outputs_probs {
-    write_prob_mat_sets::<T>(output_dir_path, &prob_mat_sets, produces_struct_profs, &align_prob_mat_pairs_with_rna_id_pairs, true);
-  }
-  let align_prob_mats_with_rna_id_pairs: ProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
-  let bpp_mats: SparseProbMats<T> = prob_mat_sets.iter().map(|x| x.bpp_mat.clone()).collect();
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
+  let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
   let mut candidates = Vec::new();
-  for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
-    let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
-    for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
-      let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
-      let mut feature_scores = FeatureCountsPosterior::new(0.);
+  for log_gamma_align in MIN_LOG_GAMMA_ALIGN .. MAX_LOG_GAMMA_ALIGN + 1 {
+    let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
+    for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
+      let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
+      let mut feature_scores = FeatureCountsPosterior::new(align_count_posterior);
       feature_scores.basepair_count_posterior = basepair_count_posterior;
-      feature_scores.align_count_posterior = align_count_posterior;
-      candidates.push((feature_scores, MeaStructAlign::<T>::new()));
+      candidates.push((feature_scores, MeaStructAlign::new()));
     }
   }
   thread_pool.scoped(|scope| {
     let ref ref_2_align_prob_mats_with_rna_id_pairs = align_prob_mats_with_rna_id_pairs;
     let ref ref_2_bpp_mats = bpp_mats;
-    for candidate in &mut candidates {
-      let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, candidate.0.basepair_count_posterior, candidate.0.align_count_posterior));
-      scope.execute(move || {
-        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, &sa_file_path);
-      })
-    }
-  });
-  let mut max_acc = NEG_INFINITY;
-  let mut argmax_params = FeatureCountsPosterior::new(NEG_INFINITY);
-  let mut argmax_align = MeaStructAlign::<T>::new();
-  for candidate in &candidates {
-    if candidate.1.acc > max_acc {
-      argmax_params = candidate.0.clone();
-      argmax_align = candidate.1.clone();
-      max_acc = candidate.1.acc;
-    }
-  }
-  let sa_file_path = output_dir_path.join(&format!("{}_g1={}_g2={}.aln", input_file_prefix, argmax_params.basepair_count_posterior, argmax_params.align_count_posterior));
-  let bpp_mat_alifold = get_bpp_mat_alifold(&argmax_align, &sa_file_path, fasta_records);
-  let mut candidates = Vec::new();
-  for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR .. MAX_LOG_GAMMA_BASEPAIR + 1 {
-    let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
-    // for mix_coeff in 0 .. 11 {
-    for &mix_coeff in &MIX_COEFFS {
-      // let mix_coeff = 0.1 * mix_coeff as Prob;
-      candidates.push((basepair_count_posterior, mix_coeff, SparsePosMat::<T>::default(), NEG_INFINITY));
-    }
-  }
-  thread_pool.scoped(|scope| {
-    let ref ref_2_bpp_mats = bpp_mats;
-    let ref ref_2_bpp_mat_alifold = bpp_mat_alifold;
-    let ref ref_2_argmax_align = argmax_align;
-    let ref ref_2_fasta_records = fasta_records;
+    let ref ref_2_insert_prob_set_pairs_with_rna_id_pairs = insert_prob_set_pairs_with_rna_id_pairs;
     for candidate in &mut candidates {
       scope.execute(move || {
-        let result = consalifold(ref_2_bpp_mats, ref_2_bpp_mat_alifold, ref_2_argmax_align, candidate.0, candidate.1, ref_2_fasta_records);
-        candidate.2 = result.0;
-        candidate.3 = result.1;
-      })
+        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, ref_2_insert_prob_set_pairs_with_rna_id_pairs, &mut Pool::new(1));
+      });
     }
   });
-  let mut max_acc = NEG_INFINITY;
-  let mut argmax_params_2 = (NEG_INFINITY, NEG_INFINITY);
-  let mut argmax_css = SparsePosMat::<T>::default();
+  let mut sa = MeaStructAlign::new();
+  let mut feature_scores = FeatureCountsPosterior::new(0.);
   for candidate in &candidates {
-    if candidate.3 > max_acc {
-      argmax_params_2 = (candidate.0, candidate.1);
-      argmax_css = candidate.2.clone();
-      max_acc = candidate.3;
+    let ref tmp_sa = candidate.1;
+    if tmp_sa.acc > sa.acc {
+      feature_scores = candidate.0.clone();
+      sa = tmp_sa.clone();
     }
   }
-  argmax_align.bp_col_pairs = argmax_css;
-  argmax_align.sort();
-  compute_and_write_mea_sta(&output_dir_path, fasta_records, &argmax_params, &argmax_params_2, &argmax_align);
+  let bpp_mat_alifold = get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records);
+  let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats, &bpp_mat_alifold);
+  sa.bp_col_pairs = consalifold(&mix_bpp_mat, &sa, BASEPAIR_COUNT_POSTERIOR_ALIFOLD, &fasta_records);
+  sa.sort();
+  let output_file_path = output_dir_path.join(&format!("consalign.sth"));
+  write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn compute_and_write_mea_sta<T>(output_dir_path: &Path, fasta_records: &FastaRecords, feature_scores: &FeatureCountsPosterior, argmax_params_2: &(FeatureCount, FeatureCount), sa: &MeaStructAlign<T>)
-where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
-{
-  let output_file_path = output_dir_path.join(&format!("consalign_g1={}_g2={}_g3={}_t={}.sth", feature_scores.basepair_count_posterior, feature_scores.align_count_posterior, argmax_params_2.0, argmax_params_2.1));
-  write_stockholm_file(&output_file_path, &sa, fasta_records);
-}
-
-fn write_stockholm_file<T>(output_file_path: &Path, sa: &MeaStructAlign<T>, fasta_records: &FastaRecords)
+fn write_stockholm_file<T>(output_file_path: &Path, fasta_records: &FastaRecords, sa: &MeaStructAlign<T>, feature_scores: &FeatureCountsPosterior)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let mut writer_2_output_file = BufWriter::new(File::create(output_file_path).unwrap());
-  let mut buf_4_writer_2_output_file = format!("# STOCKHOLM 1.0\n");
+  let mut buf_4_writer_2_output_file = format!("# STOCKHOLM 1.0\n#=GF GA gamma_align={} gamma_basepair={}\n", feature_scores.align_count_posterior, feature_scores.basepair_count_posterior);
   let sa_len = sa.cols.len();
   let descriptor = "#=GC SS_cons";
   let descriptor_len = descriptor.len();
