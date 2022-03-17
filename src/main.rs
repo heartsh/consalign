@@ -27,6 +27,16 @@ fn main() {
     "A path to an output directory",
     "STR",
   );
+  opts.optopt(
+    "",
+    "min_base_pair_prob",
+    &format!(
+      "A minimum base-pairing probability (Uses {} by default)",
+      DEFAULT_MIN_BPP_ALIGN
+    ),
+    "FLOAT",
+  );
+  opts.optopt("", "min_align_prob", &format!("A minimum aligning probability (Uses {} by default)", DEFAULT_MIN_ALIGN_PROB_ALIGN), "FLOAT");
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
   opts.optflag(
     "s",
@@ -57,6 +67,20 @@ fn main() {
   let outputs_probs = matches.opt_present("p") || produces_struct_profs;
   let output_dir_path = matches.opt_str("o").unwrap();
   let output_dir_path = Path::new(&output_dir_path);
+  let min_bpp = if matches.opt_present("min_base_pair_prob") {
+    matches
+      .opt_str("min_base_pair_prob")
+      .unwrap()
+      .parse()
+      .unwrap()
+  } else {
+    DEFAULT_MIN_BPP_ALIGN
+  };
+  let min_align_prob = if matches.opt_present("min_align_prob") {
+    matches.opt_str("min_align_prob").unwrap().parse().unwrap()
+  } else {
+    DEFAULT_MIN_ALIGN_PROB_ALIGN
+  };
   let fasta_file_reader = Reader::from_file(Path::new(&input_file_path)).unwrap();
   let mut fasta_records = FastaRecords::new();
   let mut max_seq_len = 0;
@@ -72,46 +96,60 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path);
+  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob);
 }
 
-fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path)
+// fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path)
+fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
+  let (prob_mat_sets, align_prob_mat_pairs_with_rna_id_pairs) = consprob::<T>(thread_pool, fasta_records, min_bpp, min_align_prob, false, true);
+  let align_prob_mats_with_rna_id_pairs: SparseProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
+  let bpp_mats: SparseProbMats<T> = prob_mat_sets.iter().map(|x| x.bpp_mat.clone()).collect();
+  // let feature_score_sets = FeatureCountSets::load_trained_score_params();
+  // let mut feature_score_sets = FeatureCountSets::new(0.);
+  // feature_score_sets.transfer();
+  // let ref ref_2_feature_score_sets = feature_score_sets;
   let num_of_fasta_records = fasta_records.len();
-  let mut bpp_mats = vec![SparseProbMat::<T>::new(); num_of_fasta_records];
+  /* let mut bpp_mats = vec![SparseProbMat::<T>::new(); num_of_fasta_records];
   thread_pool.scoped(|scope| {
     for (bpp_mat, fasta_record) in multizip((bpp_mats.iter_mut(), fasta_records.iter())) {
       let seq_len = fasta_record.seq.len();
       scope.execute(move || {
         let (obtained_bpp_mat, _) = mccaskill_algo(&fasta_record.seq[1 .. seq_len - 1], true);
+        // *bpp_mat = mccaskill_algo_trained(&fasta_record.seq[..], ref_2_feature_score_sets);
         *bpp_mat = remove_small_bpps_from_bpp_mat::<T>(&obtained_bpp_mat, 0.);
       });
     }
-  });
-  let mut align_prob_mats_with_rna_id_pairs = ProbMatsWithRnaIdPairs::default();
+  }); */
+  // let mut align_prob_mats_with_rna_id_pairs = ProbMatsWithRnaIdPairs::default();
   let mut insert_prob_set_pairs_with_rna_id_pairs = ProbSetPairsWithRnaIdPairs::default();
   for rna_id_1 in 0 .. num_of_fasta_records {
     for rna_id_2 in rna_id_1 + 1 .. num_of_fasta_records {
       let rna_id_pair = (rna_id_1, rna_id_2);
-      align_prob_mats_with_rna_id_pairs.insert(rna_id_pair, ProbMat::new());
+      // align_prob_mats_with_rna_id_pairs.insert(rna_id_pair, ProbMat::new());
       insert_prob_set_pairs_with_rna_id_pairs.insert(rna_id_pair, (Probs::new(), Probs::new()));
     }
   }
-  thread_pool.scoped(|scope| {
+  /* thread_pool.scoped(|scope| {
     for (rna_id_pair, align_prob_mat) in align_prob_mats_with_rna_id_pairs.iter_mut() {
       let seq_pair = (&fasta_records[rna_id_pair.0].seq[..], &fasta_records[rna_id_pair.1].seq[..]);
       scope.execute(move || {
         *align_prob_mat = durbin_algo(&seq_pair);
+        // *align_prob_mat = durbin_algo_trained(&seq_pair, ref_2_feature_score_sets);
       });
     }
-  });
+  }); */
   thread_pool.scoped(|scope| {
     for (rna_id_pair, insert_prob_set_pair) in insert_prob_set_pairs_with_rna_id_pairs.iter_mut() {
       let ref align_prob_mat = align_prob_mats_with_rna_id_pairs[rna_id_pair];
+      let seq_len_pair = (
+        fasta_records[rna_id_pair.0].seq.len(),
+        fasta_records[rna_id_pair.1].seq.len(),
+        );
       scope.execute(move || {
-        *insert_prob_set_pair = get_insert_prob_set_pair(align_prob_mat);
+        *insert_prob_set_pair = get_insert_prob_set_pair(align_prob_mat, &seq_len_pair);
       });
     }
   });

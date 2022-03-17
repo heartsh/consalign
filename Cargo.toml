@@ -14,7 +14,7 @@ license = "MIT"
 [dependencies]
 num_cpus = "1.0"
 crossbeam = "0.8"
-bio-seq-algos = {path = "../bio-seq-algos"}
+# bio-seq-algos = {path = "../bio-seq-algos"}
 # consprob = "0.1"
 consprob = {path = "../consprob-trained"}
 petgraph = "0.6"
