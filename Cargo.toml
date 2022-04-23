@@ -1,7 +1,6 @@
 [package]
 name = "consalign"
 version = "0.1.0"
-# edition = "2018"
 authors = ["heartsh <heartsh@heartsh.io>"]
 description = "Structural Alignment-aware Prediction Tool for RNAs"
 repository = "https://github.com/heartsh/consalign"
@@ -9,14 +8,10 @@ readme = "README.md"
 keywords = ["bioinformatics", "rna", "sequence-alignment"]
 license = "MIT"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 num_cpus = "1.0"
 crossbeam = "0.8"
-# bio-seq-algos = {path = "../bio-seq-algos"}
-# consprob = "0.1"
-consprob = {path = "../consprob-trained"}
+consprob-trained = {path = "../consprob-trained"}
 petgraph = "0.6"
 rand = "0.8"
 
