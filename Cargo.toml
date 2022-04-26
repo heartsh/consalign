@@ -2,7 +2,7 @@
 name = "consalign"
 version = "0.1.0"
 authors = ["heartsh <heartsh@heartsh.io>"]
-description = "Structural Alignment-aware Prediction Tool for RNAs"
+description = "Trainable RNA Structural Aligner"
 repository = "https://github.com/heartsh/consalign"
 readme = "README.md"
 keywords = ["bioinformatics", "rna", "sequence-alignment"]
@@ -11,7 +11,7 @@ license = "MIT"
 [dependencies]
 num_cpus = "1.0"
 crossbeam = "0.8"
-consprob-trained = {path = "../consprob-trained"}
+consprob-trained = "0.1"
 petgraph = "0.6"
 rand = "0.8"
 
