@@ -5,6 +5,7 @@ use consalign::*;
 use std::env;
 use std::fs::File;
 use std::fs::create_dir;
+use std::mem::drop;
 
 type MeaCssStr = MeaSsStr;
 
@@ -44,6 +45,11 @@ fn main() {
   opts.optopt("", "min_align_prob", &format!("A minimum aligning probability (Uses {} by default)", DEFAULT_MIN_ALIGN_PROB_ALIGN), "FLOAT");
   opts.optopt("m", "scoring_model", &format!("Choose a structural alignment scoring model from ensemble, turner, trained (Uses {} by default)", DEFAULT_SCORING_MODEL), "STR");
   opts.optopt("u", "train_type", &format!("Choose a scoring parameter training type from trained_transfer, trained_random_init, transferred_only (Uses {} by default)", DEFAULT_TRAIN_TYPE), "STR");
+  opts.optflag(
+    "d",
+    "disables_alifold",
+    &format!("Disables RNAalifold used in ConsAlifold"),
+  );
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
   opts.optflag("h", "help", "Print a help menu");
   let matches = match opts.parse(&args[1..]) {
@@ -110,6 +116,7 @@ fn main() {
   } else {
     TrainType::TrainedTransfer
   };
+  let disables_alifold = matches.opt_present("d");
   let fasta_file_reader = Reader::from_file(Path::new(&input_file_path)).unwrap();
   let mut fasta_records = FastaRecords::new();
   let mut max_seq_len = 0;
@@ -125,10 +132,10 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type);
+  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold);
 }
 
-fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob, scoring_model: ScoringModel, train_type: TrainType)
+fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob, scoring_model: ScoringModel, train_type: TrainType, disables_alifold: bool)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
@@ -139,6 +146,8 @@ where
   };
   let align_prob_mats_with_rna_id_pairs_turner: SparseProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs_turner.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
   let bpp_mats_turner: SparseProbMats<T> = prob_mat_sets_turner.iter().map(|x| x.bpp_mat.clone()).collect();
+  drop(prob_mat_sets_turner);
+  drop(align_prob_mat_pairs_with_rna_id_pairs_turner);
   let (prob_mat_sets_trained, align_prob_mat_pairs_with_rna_id_pairs_trained) = if matches!(scoring_model, ScoringModel::Ensemble) || matches!(scoring_model, ScoringModel::Trained) {
     consprob_trained::<T>(thread_pool, fasta_records, min_bpp, min_align_prob, false, true, train_type)
   } else {
@@ -146,6 +155,8 @@ where
   };
   let align_prob_mats_with_rna_id_pairs_trained: SparseProbMatsWithRnaIdPairs<T> = align_prob_mat_pairs_with_rna_id_pairs_trained.iter().map(|(key, x)| (*key, x.align_prob_mat.clone())).collect();
   let bpp_mats_trained: SparseProbMats<T> = prob_mat_sets_trained.iter().map(|x| x.bpp_mat.clone()).collect();
+  drop(prob_mat_sets_trained);
+  drop(align_prob_mat_pairs_with_rna_id_pairs_trained);
   let num_of_fasta_records = fasta_records.len();
   let mut bpp_mats_fused = vec![SparseProbMat::<T>::new(); num_of_fasta_records];
   let mut align_prob_mats_with_rna_id_pairs_fused = SparseProbMatsWithRnaIdPairs::<T>::default();
@@ -242,28 +253,32 @@ where
   let mut feature_scores = FeatureCountsPosterior::new(0.);
   for candidate in &candidates {
     let ref tmp_sa = candidate.1;
-    if tmp_sa.acc > sa.acc {
+    if tmp_sa.sps > sa.sps {
       feature_scores = candidate.0.clone();
       sa = tmp_sa.clone();
     }
   }
-  let bpp_mat_alifold = get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records);
-  let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats_fused, &bpp_mat_alifold);
+  let bpp_mat_alifold = if disables_alifold {
+    SparseProbMat::<T>::default()
+  } else {
+    get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records)
+  };
+  let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats_fused, &bpp_mat_alifold, disables_alifold);
   sa.bp_col_pairs = consalifold(&mix_bpp_mat, &sa, BASEPAIR_COUNT_POSTERIOR_ALIFOLD,);
   sa.sort();
   let output_file_path = output_dir_path.join(&format!("consalign.sth"));
-  write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores);
+  write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores,);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn write_stockholm_file<T>(output_file_path: &Path, fasta_records: &FastaRecords, sa: &MeaStructAlign<T>, feature_scores: &FeatureCountsPosterior)
+fn write_stockholm_file<T>(output_file_path: &Path, fasta_records: &FastaRecords, sa: &MeaStructAlign<T>, feature_scores: &FeatureCountsPosterior,)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let mut writer_2_output_file = BufWriter::new(File::create(output_file_path).unwrap());
-  let mut buf_4_writer_2_output_file = format!("# STOCKHOLM 1.0\n#=GF GA gamma_align={} gamma_basepair={}\n", feature_scores.align_count_posterior, feature_scores.basepair_count_posterior);
+  let mut buf_4_writer_2_output_file = format!("# STOCKHOLM 1.0\n#=GF GA gamma_align={} gamma_basepair={} expected_sps={}\n", feature_scores.align_count_posterior, feature_scores.basepair_count_posterior, sa.sps);
   let sa_len = sa.cols.len();
   let descriptor = "#=GC SS_cons";
   let descriptor_len = descriptor.len();

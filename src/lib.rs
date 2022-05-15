@@ -28,7 +28,7 @@ pub struct MeaStructAlign<T> {
   pub right_bp_col_sets_with_cols: ColSetsWithCols<T>,
   pub pos_map_sets: PosMapSets<T>,
   pub rna_ids: RnaIds,
-  pub acc: Mea,
+  pub sps: Mea,
   pub bp_col_pairs: SparsePosMat<T>,
 }
 pub type SparsePosMat<T> = HashSet<PosPair<T>>;
@@ -66,7 +66,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       right_bp_col_sets_with_cols: ColSetsWithCols::<T>::default(),
       pos_map_sets: PosMapSets::<T>::new(),
       rna_ids: RnaIds::new(),
-      acc: 0.,
+      sps: 0.,
       bp_col_pairs: SparsePosMat::<T>::default(),
     }
   }
@@ -113,7 +113,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
     }
   }
 
-  pub fn set_acc(&mut self, align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>, insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs) {
+  pub fn set_sps(&mut self, align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>, insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs) {
     let sa_len = self.cols.len();
     let num_of_rnas = self.rna_ids.len();
     let (mut pt, mut total): (Mea, Mea) = (0., 0.);
@@ -149,7 +149,7 @@ impl<T: Clone + Copy + Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord
       }
     }
     let sps = pt / total;
-    self.acc = sps;
+    self.sps = sps;
   }
 
   pub fn sort(&mut self) {
@@ -179,7 +179,7 @@ impl FeatureCountsPosterior {
 pub const GAP: Char = '-' as Char;
 pub const MIN_LOG_GAMMA_BASEPAIR: i32 = 0;
 pub const MIN_LOG_GAMMA_ALIGN: i32 = MIN_LOG_GAMMA_BASEPAIR;
-pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 0;
+pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 3;
 pub const MAX_LOG_GAMMA_ALIGN: i32 = 7;
 pub const BRACKET_PAIRS: [(char, char); 9] = [('(', ')'), ('<', '>'), ('{', '}'), ('[', ']'), ('A', 'a'), ('B', 'b'), ('C', 'c'), ('D', 'd'), ('E', 'e'), ];
 pub const DEFAULT_MIN_BPP_ALIGN: Prob = DEFAULT_MIN_BPP;
@@ -275,10 +275,10 @@ where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
   let (progressive_tree, root) = build_guide_tree(fasta_records, align_prob_mats_with_rna_id_pairs, feature_scores, thread_pool);
-  recursive_mea_struct_align(&progressive_tree, root, align_prob_mats_with_rna_id_pairs, bpp_mats, &fasta_records, feature_scores, insert_prob_set_pairs_with_rna_id_pairs)
+  recursive_mea_struct_align(&progressive_tree, root, align_prob_mats_with_rna_id_pairs, bpp_mats, &fasta_records, feature_scores, insert_prob_set_pairs_with_rna_id_pairs, true)
 }
 
-pub fn recursive_mea_struct_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, fasta_records: &FastaRecords, feature_scores: &FeatureCountsPosterior, insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs) -> MeaStructAlign<T>
+pub fn recursive_mea_struct_align<T>(progressive_tree: &ProgressiveTree, node: NodeIndex<DefaultIx>, align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, fasta_records: &FastaRecords, feature_scores: &FeatureCountsPosterior, insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs, is_final: bool) -> MeaStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -291,9 +291,9 @@ where
     let mut neighbors = progressive_tree.neighbors_directed(node, Outgoing).detach();
     let child = neighbors.next_node(progressive_tree).unwrap();
     let child_2 = neighbors.next_node(progressive_tree).unwrap();
-    let child_mea_struct_align = recursive_mea_struct_align(progressive_tree, child, align_prob_mats_with_rna_id_pairs, bpp_mats, fasta_records, feature_scores, insert_prob_set_pairs_with_rna_id_pairs);
-    let child_mea_struct_align_2 = recursive_mea_struct_align(progressive_tree, child_2, align_prob_mats_with_rna_id_pairs, bpp_mats, fasta_records, feature_scores, insert_prob_set_pairs_with_rna_id_pairs);
-    get_mea_align(&(&child_mea_struct_align, &child_mea_struct_align_2), align_prob_mats_with_rna_id_pairs, bpp_mats, feature_scores, insert_prob_set_pairs_with_rna_id_pairs)
+    let child_mea_struct_align = recursive_mea_struct_align(progressive_tree, child, align_prob_mats_with_rna_id_pairs, bpp_mats, fasta_records, feature_scores, insert_prob_set_pairs_with_rna_id_pairs, false);
+    let child_mea_struct_align_2 = recursive_mea_struct_align(progressive_tree, child_2, align_prob_mats_with_rna_id_pairs, bpp_mats, fasta_records, feature_scores, insert_prob_set_pairs_with_rna_id_pairs, false);
+    get_mea_align(&(&child_mea_struct_align, &child_mea_struct_align_2), align_prob_mats_with_rna_id_pairs, bpp_mats, feature_scores, insert_prob_set_pairs_with_rna_id_pairs, is_final)
   }
 }
 
@@ -310,7 +310,7 @@ where
   converted_seq
 }
 
-pub fn get_mea_align<'a, T>(struct_align_pair: &MeaStructAlignPair<'a, T>, align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, feature_scores: &FeatureCountsPosterior, insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs) -> MeaStructAlign<T>
+pub fn get_mea_align<'a, T>(struct_align_pair: &MeaStructAlignPair<'a, T>, align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>, bpp_mats: &SparseProbMats<T>, feature_scores: &FeatureCountsPosterior, insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs, is_final: bool) -> MeaStructAlign<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -393,26 +393,29 @@ where
       new_mea_struct_align.pos_map_sets.remove(i);
     }
   }
-  let sa_len = new_mea_struct_align.cols.len();
-  for bp_pos_map_set_pair in &bp_pos_map_set_pairs {
-    for i in 0 .. sa_len {
-      let ref pos_maps = new_mea_struct_align.pos_map_sets[i];
-      if *pos_maps != bp_pos_map_set_pair.0 {
-        continue;
-      }
-      let short_i = T::from_usize(i).unwrap();
-      for j in i + 1 .. sa_len {
-        let ref pos_maps_2 = new_mea_struct_align.pos_map_sets[j];
-        if *pos_maps_2 == bp_pos_map_set_pair.1 {
-          let short_j = T::from_usize(j).unwrap();
-          new_mea_struct_align.bp_col_pairs.insert((short_i, short_j));
-          break;
+  if is_final {
+    let sa_len = new_mea_struct_align.cols.len();
+    for bp_pos_map_set_pair in &bp_pos_map_set_pairs {
+      for i in 0 .. sa_len {
+        let ref pos_maps = new_mea_struct_align.pos_map_sets[i];
+        if *pos_maps != bp_pos_map_set_pair.0 {
+          continue;
+        }
+        let short_i = T::from_usize(i).unwrap();
+        for j in i + 1 .. sa_len {
+          let ref pos_maps_2 = new_mea_struct_align.pos_map_sets[j];
+          if *pos_maps_2 == bp_pos_map_set_pair.1 {
+            let short_j = T::from_usize(j).unwrap();
+            new_mea_struct_align.bp_col_pairs.insert((short_i, short_j));
+            break;
+          }
         }
       }
     }
+    new_mea_struct_align.set_sps(align_prob_mats_with_rna_id_pairs, insert_prob_set_pairs_with_rna_id_pairs);
+  } else {
+    new_mea_struct_align.set_right_bp_info(bpp_mats, feature_scores);
   }
-  new_mea_struct_align.set_acc(align_prob_mats_with_rna_id_pairs, insert_prob_set_pairs_with_rna_id_pairs);
-  new_mea_struct_align.set_right_bp_info(bpp_mats, feature_scores);
   new_mea_struct_align
 }
 
@@ -813,7 +816,7 @@ pub fn run_command(command: &str, args: &[&str], expect: &str) -> Output {
   Command::new(command).args(args).output().expect(expect)
 }
 
-pub fn get_mix_bpp_mat<T>(sa: &MeaStructAlign<T>, bpp_mats: &SparseProbMats<T>, bpp_mat_alifold: &SparseProbMat<T>) -> SparseProbMat<T>
+pub fn get_mix_bpp_mat<T>(sa: &MeaStructAlign<T>, bpp_mats: &SparseProbMats<T>, bpp_mat_alifold: &SparseProbMat<T>, disables_alifold: bool) -> SparseProbMat<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
 {
@@ -826,10 +829,14 @@ where
     for j in i + 1 .. sa_len {
       let short_j = T::from_usize(j).unwrap();
       let pos_pair = (short_i, short_j);
-      let bpp_alifold = match bpp_mat_alifold.get(&pos_pair) {
-        Some(&bpp_alifold) => {
-          bpp_alifold
-        }, None => {0.},
+      let bpp_alifold = if disables_alifold {
+        NEG_INFINITY
+      } else {
+          match bpp_mat_alifold.get(&pos_pair) {
+          Some(&bpp_alifold) => {
+            bpp_alifold
+          }, None => {0.},
+        }
       };
       let ref pos_maps_2 = sa.pos_map_sets[j];
       let pos_map_pairs: Vec<(T, T)> = pos_maps.iter().zip(pos_maps_2.iter()).map(|(&x, &y)| (x, y)).collect();
@@ -843,7 +850,11 @@ where
         }
       }
       let bpp_avg = bpp_sum / num_of_rnas as Prob;
-      let mix_bpp = MIX_COEFF * bpp_avg + (1. - MIX_COEFF) * bpp_alifold;
+      let mix_bpp = if disables_alifold {
+        bpp_avg
+      } else {
+        MIX_COEFF * bpp_avg + (1. - MIX_COEFF) * bpp_alifold
+      };
       if mix_bpp >= 0. {
         let pos_pair = (pos_pair.0 + T::one(), pos_pair.1 + T::one());
         mix_bpp_mat.insert(pos_pair, mix_bpp);
