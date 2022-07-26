@@ -132,12 +132,17 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  multi_threaded_consalign::<u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold);
+  if max_seq_len <= u8::MAX as usize {
+    multi_threaded_consalign::<u8, u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold);
+  } else {
+    multi_threaded_consalign::<u16, u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold);
+  }
 }
 
-fn multi_threaded_consalign<T>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob, scoring_model: ScoringModel, train_type: TrainType, disables_alifold: bool)
+fn multi_threaded_consalign<T, U>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob, scoring_model: ScoringModel, train_type: TrainType, disables_alifold: bool)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
+  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let (prob_mat_sets_turner, align_prob_mat_pairs_with_rna_id_pairs_turner) = if matches!(scoring_model, ScoringModel::Ensemble) || matches!(scoring_model, ScoringModel::Turner) {
     consprob::<T>(thread_pool, fasta_records, min_bpp, min_align_prob, false, false, true)
@@ -245,7 +250,7 @@ where
     let ref ref_2_insert_prob_set_pairs_with_rna_id_pairs = insert_prob_set_pairs_with_rna_id_pairs;
     for candidate in &mut candidates {
       scope.execute(move || {
-        candidate.1 = consalign::<T>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, ref_2_insert_prob_set_pairs_with_rna_id_pairs, &mut Pool::new(1));
+        candidate.1 = consalign::<T, U>(fasta_records, ref_2_align_prob_mats_with_rna_id_pairs, ref_2_bpp_mats, &candidate.0, ref_2_insert_prob_set_pairs_with_rna_id_pairs);
       });
     }
   });
@@ -259,12 +264,12 @@ where
     }
   }
   let bpp_mat_alifold = if disables_alifold {
-    SparseProbMat::<T>::default()
+    SparseProbMat::<U>::default()
   } else {
     get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records)
   };
   let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats_fused, &bpp_mat_alifold, disables_alifold);
-  sa.bp_col_pairs = consalifold(&mix_bpp_mat, &sa, BASEPAIR_COUNT_POSTERIOR_ALIFOLD,);
+  sa.bp_col_pairs = consalifold(&mix_bpp_mat, &sa.cols, BASEPAIR_COUNT_POSTERIOR_ALIFOLD,);
   sa.sort();
   let output_file_path = output_dir_path.join(&format!("consalign.sth"));
   write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores,);
@@ -273,9 +278,10 @@ where
   write_readme(output_dir_path, &readme_contents);
 }
 
-fn write_stockholm_file<T>(output_file_path: &Path, fasta_records: &FastaRecords, sa: &MeaStructAlign<T>, feature_scores: &FeatureCountsPosterior,)
+fn write_stockholm_file<T, U>(output_file_path: &Path, fasta_records: &FastaRecords, sa: &MeaStructAlign<T, U>, feature_scores: &FeatureCountsPosterior,)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
+  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let mut writer_2_output_file = BufWriter::new(File::create(output_file_path).unwrap());
   let mut buf_4_writer_2_output_file = format!("# STOCKHOLM 1.0\n#=GF GA gamma_align={} gamma_basepair={} expected_sps={}\n", feature_scores.align_count_posterior, feature_scores.basepair_count_posterior, sa.sps);
@@ -305,9 +311,10 @@ where
   let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
 }
 
-fn get_mea_css_str<T>(sa: &MeaStructAlign<T>, sa_len: usize) -> MeaCssStr
+fn get_mea_css_str<T, U>(sa: &MeaStructAlign<T, U>, sa_len: usize) -> MeaCssStr
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
+  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
   let mut mea_css_str = vec![UNPAIRING_BASE; sa_len];
   for &(i, j) in &sa.bp_col_pairs {

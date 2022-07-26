@@ -13,7 +13,6 @@ num_cpus = "1.0"
 crossbeam = "0.8"
 consprob-trained = "0.1"
 petgraph = "0.6"
-rand = "0.8"
 
 [lib]
 path = "src/lib.rs"
