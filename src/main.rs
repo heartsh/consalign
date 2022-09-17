@@ -24,7 +24,7 @@ fn main() {
   opts.reqopt(
     "i",
     "input_file_path",
-    "A path to an input FASTA file containing RNA sequences to predict probabilities",
+    "A path to an input FASTA file containing RNA sequences to predict their structural alignment",
     "STR",
   );
   opts.reqopt(
@@ -43,6 +43,16 @@ fn main() {
     "FLOAT",
   );
   opts.optopt("", "min_align_prob", &format!("A minimum aligning probability (Uses {} by default)", DEFAULT_MIN_ALIGN_PROB_ALIGN), "FLOAT");
+  opts.optopt(
+    "",
+    "min_base_pair_prob_turner",
+    &format!(
+      "A minimum base-pairing probability for Turner's model (Uses {} by default)",
+      DEFAULT_MIN_BPP_ALIGN_TURNER
+    ),
+    "FLOAT",
+  );
+  opts.optopt("", "min_align_prob_turner", &format!("A minimum aligning probability for Turner's model (Uses {} by default)", DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER), "FLOAT");
   opts.optopt("m", "scoring_model", &format!("Choose a structural alignment scoring model from ensemble, turner, trained (Uses {} by default)", DEFAULT_SCORING_MODEL), "STR");
   opts.optopt("u", "train_type", &format!("Choose a scoring parameter training type from trained_transfer, trained_random_init, transferred_only (Uses {} by default)", DEFAULT_TRAIN_TYPE), "STR");
   opts.optflag(
@@ -50,6 +60,7 @@ fn main() {
     "disables_alifold",
     &format!("Disables RNAalifold used in ConsAlifold"),
   );
+  opts.optflag("p", "disables_transplant", "Does not transplant trained sequence alignment parameters into Turner's model");
   opts.optopt("t", "num_of_threads", "The number of threads in multithreading (Uses the number of the threads of this computer by default)", "UINT");
   opts.optflag("h", "help", "Print a help menu");
   let matches = match opts.parse(&args[1..]) {
@@ -86,6 +97,20 @@ fn main() {
   } else {
     DEFAULT_MIN_ALIGN_PROB_ALIGN
   };
+  let min_bpp_turner = if matches.opt_present("min_base_pair_prob_turner") {
+    matches
+      .opt_str("min_base_pair_prob_turner")
+      .unwrap()
+      .parse()
+      .unwrap()
+  } else {
+    DEFAULT_MIN_BPP_ALIGN_TURNER
+  };
+  let min_align_prob_turner = if matches.opt_present("min_align_prob_turner") {
+    matches.opt_str("min_align_prob_turner").unwrap().parse().unwrap()
+  } else {
+    DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER
+  };
   let scoring_model = if matches.opt_present("m") {
     let scoring_model_str = matches.opt_str("m").unwrap();
     if scoring_model_str == "ensemble" {
@@ -117,6 +142,7 @@ fn main() {
     TrainType::TrainedTransfer
   };
   let disables_alifold = matches.opt_present("d");
+  let disables_transplant = matches.opt_present("p");
   let fasta_file_reader = Reader::from_file(Path::new(&input_file_path)).unwrap();
   let mut fasta_records = FastaRecords::new();
   let mut max_seq_len = 0;
@@ -133,19 +159,25 @@ fn main() {
   }
   let mut thread_pool = Pool::new(num_of_threads);
   if max_seq_len <= u8::MAX as usize {
-    multi_threaded_consalign::<u8, u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold);
+    multi_threaded_consalign::<u8, u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold, min_bpp_turner, min_align_prob_turner, disables_transplant);
   } else {
-    multi_threaded_consalign::<u16, u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold);
+    multi_threaded_consalign::<u16, u16>(&mut thread_pool, &fasta_records, output_dir_path, input_file_path, min_bpp, min_align_prob, scoring_model, train_type, disables_alifold, min_bpp_turner, min_align_prob_turner, disables_transplant);
   }
 }
 
-fn multi_threaded_consalign<T, U>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob, scoring_model: ScoringModel, train_type: TrainType, disables_alifold: bool)
+fn multi_threaded_consalign<T, U>(thread_pool: &mut Pool, fasta_records: &FastaRecords, output_dir_path: &Path, input_file_path: &Path, min_bpp: Prob, min_align_prob: Prob, scoring_model: ScoringModel, train_type: TrainType, disables_alifold: bool, min_bpp_turner: Prob, min_align_prob_turner: Prob, disables_transplant: bool)
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
   U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
 {
+  let mut align_feature_score_sets = AlignFeatureCountSets::new(0.);
+  if disables_transplant {
+    align_feature_score_sets.transfer();
+  } else {
+    copy_feature_count_sets_align(&mut align_feature_score_sets, &FeatureCountSets::load_trained_score_params());
+  }
   let (prob_mat_sets_turner, align_prob_mat_pairs_with_rna_id_pairs_turner) = if matches!(scoring_model, ScoringModel::Ensemble) || matches!(scoring_model, ScoringModel::Turner) {
-    consprob::<T>(thread_pool, fasta_records, min_bpp, min_align_prob, false, false, true)
+    consprob::<T>(thread_pool, fasta_records, min_bpp_turner, min_align_prob_turner, false, false, true, &align_feature_score_sets)
   } else {
     (ProbMatSets::<T>::default(), AlignProbMatSetsWithRnaIdPairs::<T>::default())
   };

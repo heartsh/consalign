@@ -28,7 +28,6 @@ pub struct MeaStructAlign<T, U> {
   pub sps: Mea,
   pub bp_col_pairs: SparsePosMat<U>,
 }
-pub type SparsePosMat<T> = HashSet<PosPair<T>>;
 pub type RnaIds = Vec<RnaId>;
 pub type MeaStructAlignPair<'a, T, U> = (&'a MeaStructAlign<T, U>, &'a MeaStructAlign<T, U>);
 pub type SparseMeaMat = HashMap<RnaIdPair, Mea>;
@@ -53,7 +52,6 @@ pub type SparseMeaAlignMat<T, U> = HashMap<RnaIdPair, MeaStructAlign<T, U>>;
 pub type ProbSets = Vec<Probs>;
 pub type SparseProbs<T> = HashMap<T, Prob>;
 pub type MeaSetsWithPoss<T> = HashMap<T, SparseProbs<T>>;
-pub type FeatureCount = Prob;
 
 impl<T, U> MeaStructAlign<T, U> 
 where
@@ -183,8 +181,10 @@ pub const MIN_LOG_GAMMA_ALIGN: i32 = MIN_LOG_GAMMA_BASEPAIR;
 pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 3;
 pub const MAX_LOG_GAMMA_ALIGN: i32 = 7;
 pub const BRACKET_PAIRS: [(char, char); 9] = [('(', ')'), ('<', '>'), ('{', '}'), ('[', ']'), ('A', 'a'), ('B', 'b'), ('C', 'c'), ('D', 'd'), ('E', 'e'), ];
-pub const DEFAULT_MIN_BPP_ALIGN: Prob = DEFAULT_MIN_BPP;
-pub const DEFAULT_MIN_ALIGN_PROB_ALIGN: Prob = DEFAULT_MIN_ALIGN_PROB;
+pub const DEFAULT_MIN_BPP_ALIGN: Prob = 2. * DEFAULT_MIN_BPP;
+pub const DEFAULT_MIN_ALIGN_PROB_ALIGN: Prob = 2. * DEFAULT_MIN_ALIGN_PROB;
+pub const DEFAULT_MIN_BPP_ALIGN_TURNER: Prob = DEFAULT_MIN_BPP;
+pub const DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER: Prob = DEFAULT_MIN_ALIGN_PROB;
 pub const MIX_COEFF: Prob = 0.5;
 pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str = "../src/trained_feature_scores.rs";
 pub const BASEPAIR_COUNT_POSTERIOR_ALIFOLD: Prob = 2.;
