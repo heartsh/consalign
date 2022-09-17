@@ -1,6 +1,6 @@
 [package]
 name = "consalign"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["heartsh <heartsh@heartsh.io>"]
 description = "Trainable RNA Structural Aligner"
 repository = "https://github.com/heartsh/consalign"
