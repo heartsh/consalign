@@ -5,5 +5,6 @@ target
 !*.py
 !*.tar.bz2
 !Cargo.toml
+!rustfmt.toml
 !.gitignore
 !README.md
