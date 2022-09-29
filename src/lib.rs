@@ -52,6 +52,7 @@ pub type SparseMeaAlignMat<T, U> = HashMap<RnaIdPair, MeaStructAlign<T, U>>;
 pub type ProbSets = Vec<Probs>;
 pub type SparseProbs<T> = HashMap<T, Prob>;
 pub type MeaSetsWithPoss<T> = HashMap<T, SparseProbs<T>>;
+pub type AlignShell<T> = HashMap<T, PosPair<T>>;
 
 impl<T, U> MeaStructAlign<T, U>
 where
@@ -458,6 +459,7 @@ where
     U::zero(),
     struct_align_len_pair.1 + U::one(),
   );
+  let mut align_shell = AlignShell::<U>::default();
   for i in range_inclusive(U::one(), struct_align_len_pair.0) {
     let long_i = i.to_usize().unwrap();
     let ref pos_maps = pos_map_sets[long_i - 1];
@@ -490,9 +492,62 @@ where
       let align_weight = feature_scores.align_count_posterior * align_prob_sum / denom - 1.;
       if align_weight >= 0. {
         align_weight_mat.insert(col_pair, align_weight);
+        match align_shell.get_mut(&(i - U::one())) {
+          Some(col_pair_2) => {
+            col_pair_2.0 = col_pair_2.0.min(j - U::one());
+            col_pair_2.1 = col_pair_2.1.max(j - U::one());
+          }, None => {
+            align_shell.insert(i - U::one(), (j - U::one(), j - U::one()));
+          },
+        }
+        match align_shell.get_mut(&i) {
+          Some(col_pair_2) => {
+            col_pair_2.0 = col_pair_2.0.min(j);
+            col_pair_2.1 = col_pair_2.1.max(j);
+          }, None => {
+            align_shell.insert(i, (j, j));
+          },
+        }
       }
     }
   }
+  for i in range_inclusive(U::zero(), struct_align_len_pair.0).rev() {
+    let touch = if align_shell.contains_key(&(i + U::one())) {
+      align_shell[&(i + U::one())].0
+    } else {
+      U::zero()
+    };
+    match align_shell.get_mut(&i) {
+      Some(col_pair) => {
+        col_pair.0 = col_pair.0.min(touch);
+      }, None => {
+        align_shell.insert(i, (touch, U::zero()));
+      },
+    }
+  }
+  for i in range_inclusive(U::one(), struct_align_len_pair.0) {
+    let touch = if align_shell.contains_key(&(i - U::one())) {
+      align_shell[&(i - U::one())].1
+    } else {
+      U::zero()
+    };
+    match align_shell.get_mut(&i) {
+      Some(col_pair) => {
+        col_pair.1 = col_pair.1.max(touch);
+      }, None => {
+        align_shell.insert(i, (U::zero(), touch));
+      },
+    }
+  }
+  for i in range_inclusive(U::one(), struct_align_len_pair.0) {
+    match align_shell.get_mut(&i) {
+      Some(col_pair) => {
+        col_pair.0 = col_pair.0.min(col_pair.1);
+      }, None => {},
+    }
+  }
+  align_shell.get_mut(&U::zero()).unwrap().0 = U::zero();
+  align_shell.get_mut(&struct_align_len_pair.0).unwrap().1 = struct_align_len_pair.1;
   let mut mea_mats_with_col_pairs = MeaMatsWithPosPairs::default();
   for i in range_inclusive(U::one(), struct_align_len_pair.0).rev() {
     match struct_align_pair.0.rightmost_bp_cols_with_cols.get(&i) {
@@ -506,7 +561,7 @@ where
             Some(&l) => {
               let col_quadruple = (i, j, k, l);
               let mea_mat =
-                get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple);
+                get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple, &align_shell);
               update_mea_mats_with_col_pairs(
                 &mut mea_mats_with_col_pairs,
                 &col_pair_left,
@@ -536,6 +591,7 @@ where
     &align_weight_mat,
     &mut bp_pos_map_set_pairs,
     feature_scores,
+    &align_shell,
   );
   let sa_len = new_mea_struct_align.cols.len();
   let col_gaps_only = vec![PSEUDO_BASE; num_of_rnas];
@@ -575,166 +631,11 @@ where
   new_mea_struct_align
 }
 
-pub fn traceback<'a, T, U>(
-  new_mea_struct_align: &mut MeaStructAlign<T, U>,
-  struct_align_pair: &MeaStructAlignPair<'a, T, U>,
-  col_quadruple: &PosQuadruple<U>,
-  mea_mats_with_col_pairs: &MeaMatsWithPosPairs<U>,
-  align_weight_mat: &SparseProbMat<U>,
-  bp_pos_map_set_pairs: &mut PosMapSetPairs<T>,
-  feature_scores: &FeatureCountsPosterior,
-) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-{
-  let rna_num_pair = (
-    struct_align_pair.0.rna_ids.len(),
-    struct_align_pair.1.rna_ids.len(),
-  );
-  let mut mea;
-  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple);
-  let (i, j, k, l) = *col_quadruple;
-  let (mut u, mut v) = (j - U::one(), l - U::one());
-  while u > i || v > k {
-    let col_pair = (u, v);
-    mea = mea_mat[&col_pair];
-    let (long_u, long_v) = (u.to_usize().unwrap(), v.to_usize().unwrap());
-    if u > i && v > k {
-      match align_weight_mat.get(&col_pair) {
-        Some(&align_prob_avg) => {
-          let col_pair_4_match = (u - U::one(), v - U::one());
-          let ea = mea_mat[&col_pair_4_match] + align_prob_avg;
-          if ea == mea {
-            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
-            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
-            new_col.append(&mut col_append);
-            new_mea_struct_align.cols.insert(0, new_col);
-            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
-            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
-            new_pos_map_sets.append(&mut pos_map_sets_append);
-            new_mea_struct_align
-              .pos_map_sets
-              .insert(0, new_pos_map_sets);
-            u = u - U::one();
-            v = v - U::one();
-            continue;
-          }
-        }
-        None => {}
-      }
-      let mut is_basepair_match_found = false;
-      match mea_mats_with_col_pairs.get(&col_pair) {
-        Some(mea_mat_4_bpas) => {
-          for (col_pair_left, mea_4_bpa) in mea_mat_4_bpas {
-            if !(i < col_pair_left.0 && k < col_pair_left.1) {
-              continue;
-            }
-            let col_pair_4_match = (col_pair_left.0 - U::one(), col_pair_left.1 - U::one());
-            match mea_mat.get(&col_pair_4_match) {
-              Some(&ea) => {
-                let ea = ea + mea_4_bpa;
-                if ea == mea {
-                  let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
-                  let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
-                  new_col.append(&mut col_append);
-                  new_mea_struct_align.cols.insert(0, new_col);
-                  let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
-                  let mut pos_map_sets_append =
-                    struct_align_pair.1.pos_map_sets[long_v - 1].clone();
-                  new_pos_map_sets.append(&mut pos_map_sets_append);
-                  new_mea_struct_align
-                    .pos_map_sets
-                    .insert(0, new_pos_map_sets.clone());
-                  traceback(
-                    new_mea_struct_align,
-                    struct_align_pair,
-                    &(col_pair_left.0, u, col_pair_left.1, v),
-                    mea_mats_with_col_pairs,
-                    align_weight_mat,
-                    bp_pos_map_set_pairs,
-                    feature_scores,
-                  );
-                  let long_col_pair_left = (
-                    col_pair_left.0.to_usize().unwrap(),
-                    col_pair_left.1.to_usize().unwrap(),
-                  );
-                  let mut new_col = struct_align_pair.0.cols[long_col_pair_left.0 - 1].clone();
-                  let mut col_append = struct_align_pair.1.cols[long_col_pair_left.1 - 1].clone();
-                  new_col.append(&mut col_append);
-                  new_mea_struct_align.cols.insert(0, new_col);
-                  let mut new_pos_map_sets_2 =
-                    struct_align_pair.0.pos_map_sets[long_col_pair_left.0 - 1].clone();
-                  let mut pos_map_sets_append =
-                    struct_align_pair.1.pos_map_sets[long_col_pair_left.1 - 1].clone();
-                  new_pos_map_sets_2.append(&mut pos_map_sets_append);
-                  new_mea_struct_align
-                    .pos_map_sets
-                    .insert(0, new_pos_map_sets_2.clone());
-                  bp_pos_map_set_pairs.push((new_pos_map_sets_2, new_pos_map_sets));
-                  u = col_pair_4_match.0;
-                  v = col_pair_4_match.1;
-                  is_basepair_match_found = true;
-                  break;
-                }
-              }
-              None => {}
-            }
-          }
-        }
-        None => {}
-      }
-      if is_basepair_match_found {
-        continue;
-      }
-    }
-    if u > i {
-      match mea_mat.get(&(u - U::one(), v)) {
-        Some(&ea) => {
-          if ea == mea {
-            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
-            let mut col_append = vec![PSEUDO_BASE; rna_num_pair.1];
-            new_col.append(&mut col_append);
-            new_mea_struct_align.cols.insert(0, new_col);
-            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
-            let mut pos_map_sets_append = vec![T::zero(); rna_num_pair.1];
-            new_pos_map_sets.append(&mut pos_map_sets_append);
-            new_mea_struct_align
-              .pos_map_sets
-              .insert(0, new_pos_map_sets);
-            u = u - U::one();
-            continue;
-          }
-        }
-        None => {}
-      }
-    }
-    if v > k {
-      match mea_mat.get(&(u, v - U::one())) {
-        Some(&ea) => {
-          if ea == mea {
-            let mut new_col = vec![PSEUDO_BASE; rna_num_pair.0];
-            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
-            new_col.append(&mut col_append);
-            new_mea_struct_align.cols.insert(0, new_col);
-            let mut new_pos_map_sets = vec![T::zero(); rna_num_pair.0];
-            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
-            new_pos_map_sets.append(&mut pos_map_sets_append);
-            new_mea_struct_align
-              .pos_map_sets
-              .insert(0, new_pos_map_sets);
-            v = v - U::one();
-          }
-        }
-        None => {}
-      }
-    }
-  }
-}
-
 pub fn get_mea_mat<'a, T>(
   mea_mats_with_col_pairs: &MeaMatsWithPosPairs<T>,
   align_weight_mat: &SparseProbMat<T>,
   col_quadruple: &PosQuadruple<T>,
+  align_shell: &AlignShell<T>,
 ) -> SparseProbMat<T>
 where
   T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
@@ -742,7 +643,10 @@ where
   let (i, j, k, l) = *col_quadruple;
   let mut mea_mat = SparseProbMat::<T>::default();
   for u in range(i, j) {
-    for v in range(k, l) {
+    let (begin, end) = align_shell[&u];
+    let begin = begin.max(k);
+    let end = end.min(l - T::one());
+    for v in range_inclusive(begin, end) {
       let col_pair = (u, v);
       if u == i && v == k {
         mea_mat.insert(col_pair, 0.);
@@ -840,6 +744,164 @@ pub fn update_mea_mats_with_col_pairs<'a, T, U>(
           mea_mat_4_bpas.insert(*col_pair_left, mea_4_bpa);
           mea_mats_with_col_pairs.insert(col_pair_right, mea_mat_4_bpas);
         }
+      }
+    }
+  }
+}
+
+pub fn traceback<'a, T, U>(
+  new_mea_struct_align: &mut MeaStructAlign<T, U>,
+  struct_align_pair: &MeaStructAlignPair<'a, T, U>,
+  col_quadruple: &PosQuadruple<U>,
+  mea_mats_with_col_pairs: &MeaMatsWithPosPairs<U>,
+  align_weight_mat: &SparseProbMat<U>,
+  bp_pos_map_set_pairs: &mut PosMapSetPairs<T>,
+  feature_scores: &FeatureCountsPosterior,
+  align_shell: &AlignShell<U>,
+) where
+  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+{
+  let rna_num_pair = (
+    struct_align_pair.0.rna_ids.len(),
+    struct_align_pair.1.rna_ids.len(),
+  );
+  let mut mea;
+  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple, align_shell);
+  let (i, j, k, l) = *col_quadruple;
+  let (mut u, mut v) = (j - U::one(), l - U::one());
+  while u > i || v > k {
+    let col_pair = (u, v);
+    mea = mea_mat[&col_pair];
+    let (long_u, long_v) = (u.to_usize().unwrap(), v.to_usize().unwrap());
+    if u > i && v > k {
+      match align_weight_mat.get(&col_pair) {
+        Some(&align_prob_avg) => {
+          let col_pair_4_match = (u - U::one(), v - U::one());
+          let ea = mea_mat[&col_pair_4_match] + align_prob_avg;
+          if ea == mea {
+            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
+            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
+            new_col.append(&mut col_append);
+            new_mea_struct_align.cols.insert(0, new_col);
+            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
+            new_pos_map_sets.append(&mut pos_map_sets_append);
+            new_mea_struct_align
+              .pos_map_sets
+              .insert(0, new_pos_map_sets);
+            u = u - U::one();
+            v = v - U::one();
+            continue;
+          }
+        }
+        None => {}
+      }
+      let mut is_basepair_match_found = false;
+      match mea_mats_with_col_pairs.get(&col_pair) {
+        Some(mea_mat_4_bpas) => {
+          for (col_pair_left, mea_4_bpa) in mea_mat_4_bpas {
+            if !(i < col_pair_left.0 && k < col_pair_left.1) {
+              continue;
+            }
+            let col_pair_4_match = (col_pair_left.0 - U::one(), col_pair_left.1 - U::one());
+            match mea_mat.get(&col_pair_4_match) {
+              Some(&ea) => {
+                let ea = ea + mea_4_bpa;
+                if ea == mea {
+                  let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
+                  let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
+                  new_col.append(&mut col_append);
+                  new_mea_struct_align.cols.insert(0, new_col);
+                  let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+                  let mut pos_map_sets_append =
+                    struct_align_pair.1.pos_map_sets[long_v - 1].clone();
+                  new_pos_map_sets.append(&mut pos_map_sets_append);
+                  new_mea_struct_align
+                    .pos_map_sets
+                    .insert(0, new_pos_map_sets.clone());
+                  traceback(
+                    new_mea_struct_align,
+                    struct_align_pair,
+                    &(col_pair_left.0, u, col_pair_left.1, v),
+                    mea_mats_with_col_pairs,
+                    align_weight_mat,
+                    bp_pos_map_set_pairs,
+                    feature_scores,
+                    align_shell,
+                  );
+                  let long_col_pair_left = (
+                    col_pair_left.0.to_usize().unwrap(),
+                    col_pair_left.1.to_usize().unwrap(),
+                  );
+                  let mut new_col = struct_align_pair.0.cols[long_col_pair_left.0 - 1].clone();
+                  let mut col_append = struct_align_pair.1.cols[long_col_pair_left.1 - 1].clone();
+                  new_col.append(&mut col_append);
+                  new_mea_struct_align.cols.insert(0, new_col);
+                  let mut new_pos_map_sets_2 =
+                    struct_align_pair.0.pos_map_sets[long_col_pair_left.0 - 1].clone();
+                  let mut pos_map_sets_append =
+                    struct_align_pair.1.pos_map_sets[long_col_pair_left.1 - 1].clone();
+                  new_pos_map_sets_2.append(&mut pos_map_sets_append);
+                  new_mea_struct_align
+                    .pos_map_sets
+                    .insert(0, new_pos_map_sets_2.clone());
+                  bp_pos_map_set_pairs.push((new_pos_map_sets_2, new_pos_map_sets));
+                  u = col_pair_4_match.0;
+                  v = col_pair_4_match.1;
+                  is_basepair_match_found = true;
+                  break;
+                }
+              }
+              None => {}
+            }
+          }
+        }
+        None => {}
+      }
+      if is_basepair_match_found {
+        continue;
+      }
+    }
+    if u > i {
+      match mea_mat.get(&(u - U::one(), v)) {
+        Some(&ea) => {
+          if ea == mea {
+            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
+            let mut col_append = vec![PSEUDO_BASE; rna_num_pair.1];
+            new_col.append(&mut col_append);
+            new_mea_struct_align.cols.insert(0, new_col);
+            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+            let mut pos_map_sets_append = vec![T::zero(); rna_num_pair.1];
+            new_pos_map_sets.append(&mut pos_map_sets_append);
+            new_mea_struct_align
+              .pos_map_sets
+              .insert(0, new_pos_map_sets);
+            u = u - U::one();
+            continue;
+          }
+        }
+        None => {}
+      }
+    }
+    if v > k {
+      match mea_mat.get(&(u, v - U::one())) {
+        Some(&ea) => {
+          if ea == mea {
+            let mut new_col = vec![PSEUDO_BASE; rna_num_pair.0];
+            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
+            new_col.append(&mut col_append);
+            new_mea_struct_align.cols.insert(0, new_col);
+            let mut new_pos_map_sets = vec![T::zero(); rna_num_pair.0];
+            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
+            new_pos_map_sets.append(&mut pos_map_sets_append);
+            new_mea_struct_align
+              .pos_map_sets
+              .insert(0, new_pos_map_sets);
+            v = v - U::one();
+          }
+        }
+        None => {}
       }
     }
   }
