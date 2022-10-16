@@ -27,15 +27,17 @@ $ RUSTFLAGS='--emit asm -C target-feature=+avx -C target-feature=+ssse3 -C targe
 You can pass ConsTrain your training data as follows:
 ```bash
 $ cd scripts
-$ constrain -i train_data_dir_path -o train_log_file_path # Your trained parameters will appear at "../src/trained_feature_score_sets.rs".
+$ # Your trained parameters will appear at "../src/trained_feature_score_sets.rs".
+$ constrain -i train_data_dir_path -o train_log_file_path
 ```
 Now, you can install ConsAlign with your trained parameters:
 ```bash
-$ cd ..
+$ cd ../..
 $ git clone https://github.com/heartsh/consalign && cd consalign
-$ # Before execute the below command, replace 'consprob-trained = "X.Y"' with 'consprob-trained = "../consprob-trained"' in "./Cargo.toml" to desginate your trained parameters
+$ # Before executing the below command, replace 'consprob-trained = "X.Y"' with 'consprob-trained = {path = "../consprob-trained"}' in "./Cargo.toml" to designate your trained parameters
 $ RUSTFLAGS='--emit asm -C target-feature=+avx -C target-feature=+ssse3 -C target-feature=+mmx' cargo install --path . -f
-$ consalign # ConsAlign parameterized with your trained parameters will be called
+$ # ConsAlign parameterized with your trained parameters will be called
+$ consalign
 ```
 
 # Author
