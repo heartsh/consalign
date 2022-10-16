@@ -18,6 +18,26 @@ Check if you have installed ConsAlign properly as follows:
 $ consalign # Its available command options will be displayed.
 ```
 
+# Train ConsAlign Using Your Training Data
+To train ConsAlign, you need to install ConsTrain, a training tool of ConsProb (ConsAlign's back engine):
+```bash
+$ git clone https://github.com/heartsh/consprob-trained && cd consprob-trained
+$ RUSTFLAGS='--emit asm -C target-feature=+avx -C target-feature=+ssse3 -C target-feature=+mmx' cargo install --path . -f
+```
+You can pass ConsTrain your training data as follows:
+```bash
+$ cd scripts
+$ constrain -i train_data_dir_path -o train_log_file_path # Your trained parameters will appear at "../src/trained_feature_score_sets.rs".
+```
+Now, you can install ConsAlign with your trained parameters:
+```bash
+$ cd ..
+$ git clone https://github.com/heartsh/consalign && cd consalign
+$ # Before execute the below command, replace 'consprob-trained = "X.Y"' with 'consprob-trained = "../consprob-trained"' in "./Cargo.toml" to desginate your trained parameters
+$ RUSTFLAGS='--emit asm -C target-feature=+avx -C target-feature=+ssse3 -C target-feature=+mmx' cargo install --path . -f
+$ consalign # ConsAlign parameterized with your trained parameters will be called
+```
+
 # Author
 [Heartsh](https://github.com/heartsh)
 
