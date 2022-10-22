@@ -496,17 +496,19 @@ where
           Some(col_pair_2) => {
             col_pair_2.0 = col_pair_2.0.min(j - U::one());
             col_pair_2.1 = col_pair_2.1.max(j - U::one());
-          }, None => {
+          }
+          None => {
             align_shell.insert(i - U::one(), (j - U::one(), j - U::one()));
-          },
+          }
         }
         match align_shell.get_mut(&i) {
           Some(col_pair_2) => {
             col_pair_2.0 = col_pair_2.0.min(j);
             col_pair_2.1 = col_pair_2.1.max(j);
-          }, None => {
+          }
+          None => {
             align_shell.insert(i, (j, j));
-          },
+          }
         }
       }
     }
@@ -520,9 +522,10 @@ where
     match align_shell.get_mut(&i) {
       Some(col_pair) => {
         col_pair.0 = col_pair.0.min(touch);
-      }, None => {
+      }
+      None => {
         align_shell.insert(i, (touch, U::zero()));
-      },
+      }
     }
   }
   for i in range_inclusive(U::one(), struct_align_len_pair.0) {
@@ -534,16 +537,18 @@ where
     match align_shell.get_mut(&i) {
       Some(col_pair) => {
         col_pair.1 = col_pair.1.max(touch);
-      }, None => {
+      }
+      None => {
         align_shell.insert(i, (U::zero(), touch));
-      },
+      }
     }
   }
   for i in range_inclusive(U::one(), struct_align_len_pair.0) {
     match align_shell.get_mut(&i) {
       Some(col_pair) => {
         col_pair.0 = col_pair.0.min(col_pair.1);
-      }, None => {},
+      }
+      None => {}
     }
   }
   align_shell.get_mut(&U::zero()).unwrap().0 = U::zero();
@@ -560,8 +565,12 @@ where
           match struct_align_pair.1.rightmost_bp_cols_with_cols.get(&k) {
             Some(&l) => {
               let col_quadruple = (i, j, k, l);
-              let mea_mat =
-                get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple, &align_shell);
+              let mea_mat = get_mea_mat(
+                &mea_mats_with_col_pairs,
+                &align_weight_mat,
+                &col_quadruple,
+                &align_shell,
+              );
               update_mea_mats_with_col_pairs(
                 &mut mea_mats_with_col_pairs,
                 &col_pair_left,
@@ -767,7 +776,12 @@ pub fn traceback<'a, T, U>(
     struct_align_pair.1.rna_ids.len(),
   );
   let mut mea;
-  let mea_mat = get_mea_mat(&mea_mats_with_col_pairs, &align_weight_mat, &col_quadruple, align_shell);
+  let mea_mat = get_mea_mat(
+    &mea_mats_with_col_pairs,
+    &align_weight_mat,
+    &col_quadruple,
+    align_shell,
+  );
   let (i, j, k, l) = *col_quadruple;
   let (mut u, mut v) = (j - U::one(), l - U::one());
   while u > i || v > k {
