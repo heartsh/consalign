@@ -229,8 +229,8 @@ fn multi_threaded_consalign<T, U>(
   min_align_prob_turner: Prob,
   disable_transplant: bool,
 ) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
+  T: HashIndex,
+  U: HashIndex,
 {
   let mut align_feature_score_sets = AlignFeatureCountSets::new(0.);
   if disable_transplant {
@@ -250,7 +250,6 @@ fn multi_threaded_consalign<T, U>(
         fasta_records,
         min_bpp_turner,
         min_align_prob_turner,
-        false,
         false,
         true,
         &align_feature_score_sets,
@@ -422,14 +421,17 @@ fn multi_threaded_consalign<T, U>(
       sa = tmp_sa.clone();
     }
   }
+  sa.sort();
+  sa.struct_align.seq_align.seqs = fasta_records.iter().map(|x| x.seq.clone()).collect();
   let bpp_mat_alifold = if disable_alifold {
     SparseProbMat::<U>::default()
   } else {
     get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records)
   };
   let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats_fused, &bpp_mat_alifold, disable_alifold);
-  sa.bp_col_pairs = consalifold(&mix_bpp_mat, &sa.cols, BASEPAIR_COUNT_POSTERIOR_ALIFOLD);
-  sa.sort();
+  let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
+  let sa_len = U::from_usize(sa_len).unwrap();
+  sa.struct_align.bp_pos_pairs = consalifold(&mix_bpp_mat, sa_len, BASEPAIR_COUNT_POSTERIOR_ALIFOLD);
   let output_file_path = output_dir_path.join(&format!("consalign.sth"));
   write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores);
   let mut readme_contents = String::from(README_CONTENTS_2);
@@ -443,15 +445,15 @@ fn write_stockholm_file<T, U>(
   sa: &MeaStructAlign<T, U>,
   feature_scores: &FeatureCountsPosterior,
 ) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
+  T: HashIndex,
+  U: HashIndex,
 {
   let mut writer_2_output_file = BufWriter::new(File::create(output_file_path).unwrap());
   let mut buf_4_writer_2_output_file = format!(
     "# STOCKHOLM 1.0\n#=GF GA gamma_align={} gamma_basepair={} expected_sps={}\n",
     feature_scores.align_count_posterior, feature_scores.basepair_count_posterior, sa.sps
   );
-  let sa_len = sa.cols.len();
+  let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
   let descriptor = "#=GC SS_cons";
   let descriptor_len = descriptor.len();
   let max_seq_id_len = fasta_records
@@ -460,13 +462,22 @@ fn write_stockholm_file<T, U>(
     .max()
     .unwrap();
   let max_seq_id_len = max_seq_id_len.max(descriptor_len);
-  let num_of_rnas = sa.cols[0].len();
+  let num_of_rnas = sa.rna_ids.len();
   for rna_id in 0..num_of_rnas {
     let ref seq_id = fasta_records[rna_id].fasta_id;
     buf_4_writer_2_output_file.push_str(seq_id);
     let mut stockholm_row = vec![' ' as Char; max_seq_id_len - seq_id.len() + 2];
+    let ref fasta_record = fasta_records[rna_id];
+    let ref seq = fasta_record.seq;
     let mut sa_row = (0..sa_len)
-      .map(|x| revert_char(sa.cols[x][rna_id]))
+      .map(|x| {
+        let pos_map = sa.struct_align.seq_align.pos_map_sets[x][rna_id].to_usize().unwrap();
+        if pos_map == 0 {
+          GAP
+        } else {
+          revert_char(seq[pos_map])
+        }
+      })
       .collect::<Vec<Char>>();
     stockholm_row.append(&mut sa_row);
     let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
@@ -485,11 +496,11 @@ fn write_stockholm_file<T, U>(
 
 fn get_mea_css_str<T, U>(sa: &MeaStructAlign<T, U>, sa_len: usize) -> MeaCssStr
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Display + Sync + Send,
+  T: HashIndex,
+  U: HashIndex,
 {
   let mut mea_css_str = vec![UNPAIRING_BASE; sa_len];
-  for &(i, j) in &sa.bp_col_pairs {
+  for &(i, j) in &sa.struct_align.bp_pos_pairs {
     mea_css_str[i.to_usize().unwrap()] = BASE_PAIRING_LEFT_BASE;
     mea_css_str[j.to_usize().unwrap()] = BASE_PAIRING_RIGHT_BASE;
   }

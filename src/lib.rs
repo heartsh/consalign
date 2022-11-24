@@ -12,21 +12,15 @@ pub use std::fs::File;
 pub use std::io::{BufRead, BufWriter};
 pub use std::process::{Command, Output};
 
-pub type Col = Vec<Base>;
-pub type Cols = Vec<Col>;
-pub type PosMaps<T> = Vec<T>;
-pub type PosMapSets<T> = Vec<PosMaps<T>>;
 pub type PosMapSetPair<T> = (PosMaps<T>, PosMaps<T>);
 pub type PosMapSetPairs<T> = Vec<PosMapSetPair<T>>;
 #[derive(Clone)]
 pub struct MeaStructAlign<T, U> {
-  pub cols: Cols,
+  pub struct_align: StructAlign<T, U>,
   pub rightmost_bp_cols_with_cols: ColsWithCols<U>,
   pub right_bp_col_sets_with_cols: ColSetsWithCols<U>,
-  pub pos_map_sets: PosMapSets<T>,
   pub rna_ids: RnaIds,
   pub sps: Mea,
-  pub bp_col_pairs: SparsePosMat<U>,
 }
 pub type RnaIds = Vec<RnaId>;
 pub type MeaStructAlignPair<'a, T, U> = (&'a MeaStructAlign<T, U>, &'a MeaStructAlign<T, U>);
@@ -53,21 +47,33 @@ pub type ProbSets = Vec<Probs>;
 pub type SparseProbs<T> = HashMap<T, Prob>;
 pub type MeaSetsWithPoss<T> = HashMap<T, SparseProbs<T>>;
 pub type AlignShell<T> = HashMap<T, PosPair<T>>;
+pub type Seqs = Vec<Seq>;
+
+#[derive(Clone)]
+pub struct SeqAlign<T> {
+  pub pos_map_sets: PosMapSets<T>,
+  pub seqs: Seqs,
+}
+
+#[derive(Clone)]
+pub struct StructAlign<T, U> {
+  pub seq_align: SeqAlign<T>,
+  pub bp_pos_pairs: SparsePosMat<U>,
+  pub unpaired_poss: SparsePoss<U>,
+}
 
 impl<T, U> MeaStructAlign<T, U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   pub fn new() -> MeaStructAlign<T, U> {
     MeaStructAlign {
-      cols: Cols::new(),
+      struct_align: StructAlign::<T, U>::new(),
       rightmost_bp_cols_with_cols: ColsWithCols::<U>::default(),
       right_bp_col_sets_with_cols: ColSetsWithCols::<U>::default(),
-      pos_map_sets: PosMapSets::<T>::new(),
       rna_ids: RnaIds::new(),
       sps: 0.,
-      bp_col_pairs: SparsePosMat::<U>::default(),
     }
   }
 
@@ -76,12 +82,12 @@ where
     bpp_mats: &SparseProbMats<T>,
     feature_scores: &FeatureCountsPosterior,
   ) {
-    let sa_len = self.cols.len();
+    let sa_len = self.struct_align.seq_align.pos_map_sets.len();
     let num_of_rnas = self.rna_ids.len();
     for i in 0..sa_len {
-      let ref pos_maps = self.pos_map_sets[i];
+      let ref pos_maps = self.struct_align.seq_align.pos_map_sets[i];
       for j in i + 1..sa_len {
-        let ref pos_maps_2 = self.pos_map_sets[j];
+        let ref pos_maps_2 = self.struct_align.seq_align.pos_map_sets[j];
         let pos_map_pairs: Vec<(T, T)> = pos_maps
           .iter()
           .zip(pos_maps_2.iter())
@@ -132,7 +138,7 @@ where
     align_prob_mats_with_rna_id_pairs: &SparseProbMatsWithRnaIdPairs<T>,
     insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs,
   ) {
-    let sa_len = self.cols.len();
+    let sa_len = self.struct_align.seq_align.pos_map_sets.len();
     let num_of_rnas = self.rna_ids.len();
     let (mut pt, mut total): (Mea, Mea) = (0., 0.);
     for i in 0..num_of_rnas {
@@ -148,7 +154,7 @@ where
         let ref insert_prob_set_pair =
           insert_prob_set_pairs_with_rna_id_pairs[&ordered_rna_id_pair];
         for k in 0..sa_len {
-          let ref pos_maps = self.pos_map_sets[k];
+          let ref pos_maps = self.struct_align.seq_align.pos_map_sets[k];
           let pos = pos_maps[i];
           let pos_2 = pos_maps[j];
           let pos_pair = if rna_id < rna_id_2 {
@@ -181,16 +187,7 @@ where
   }
 
   pub fn sort(&mut self) {
-    for col in self.cols.iter_mut() {
-      let mut pairs: Vec<(Base, RnaId)> = col
-        .iter()
-        .zip(self.rna_ids.iter())
-        .map(|(&x, &y)| (x, y))
-        .collect();
-      pairs.sort_by_key(|x| x.1.clone());
-      *col = pairs.iter().map(|x| x.0).collect();
-    }
-    for pos_maps in self.pos_map_sets.iter_mut() {
+    for pos_maps in self.struct_align.seq_align.pos_map_sets.iter_mut() {
       let mut pairs: Vec<(T, RnaId)> = pos_maps
         .iter()
         .zip(self.rna_ids.iter())
@@ -208,6 +205,32 @@ impl FeatureCountsPosterior {
     FeatureCountsPosterior {
       basepair_count_posterior: init_val,
       align_count_posterior: init_val,
+    }
+  }
+}
+
+impl<
+    T: HashIndex,
+  > SeqAlign<T>
+{
+  pub fn new() -> SeqAlign<T> {
+    SeqAlign {
+      pos_map_sets: PosMapSets::<T>::default(),
+      seqs: Seqs::new(),
+    }
+  }
+}
+
+impl<
+    T: HashIndex,
+    U: HashIndex,
+  > StructAlign<T, U>
+{
+  pub fn new() -> StructAlign<T, U> {
+    StructAlign {
+      seq_align: SeqAlign::<T>::new(),
+      bp_pos_pairs: SparsePosMat::<U>::default(),
+      unpaired_poss: SparsePoss::<U>::default(),
     }
   }
 }
@@ -243,7 +266,7 @@ pub fn build_guide_tree<T>(
   feature_scores: &FeatureCountsPosterior,
 ) -> (ProgressiveTree, NodeIndex<DefaultIx>)
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
   let num_of_rnas = fasta_records.len();
   let mut mea_mat = SparseMeaMat::default();
@@ -327,8 +350,8 @@ pub fn consalign<T, U>(
   insert_prob_set_pairs_with_rna_id_pairs: &ProbSetPairsWithRnaIdPairs,
 ) -> MeaStructAlign<T, U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let (progressive_tree, root) = build_guide_tree(
     fasta_records,
@@ -358,8 +381,8 @@ pub fn recursive_mea_struct_align<T, U>(
   is_final: bool,
 ) -> MeaStructAlign<T, U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let num_of_rnas = fasta_records.len();
   let rna_id = *progressive_tree.node_weight(node).unwrap();
@@ -408,13 +431,11 @@ pub fn convert_seq<T, U>(
   feature_scores: &FeatureCountsPosterior,
 ) -> MeaStructAlign<T, U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let mut converted_seq = MeaStructAlign::new();
-  let seq_len = seq.len();
-  converted_seq.cols = seq[1..seq_len - 1].iter().map(|&x| vec![x]).collect();
-  converted_seq.pos_map_sets = (1..seq.len() - 1)
+  converted_seq.struct_align.seq_align.pos_map_sets = (1..seq.len() - 1)
     .map(|x| vec![T::from_usize(x).unwrap()])
     .collect();
   converted_seq.rna_ids = vec![rna_id];
@@ -431,12 +452,12 @@ pub fn get_mea_align<'a, T, U>(
   is_final: bool,
 ) -> MeaStructAlign<T, U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let struct_align_len_pair = (
-    struct_align_pair.0.cols.len(),
-    struct_align_pair.1.cols.len(),
+    struct_align_pair.0.struct_align.seq_align.pos_map_sets.len(),
+    struct_align_pair.1.struct_align.seq_align.pos_map_sets.len(),
   );
   let rna_num_pair = (
     struct_align_pair.0.rna_ids.len(),
@@ -447,8 +468,8 @@ where
   let mut align_weight_mat = SparseProbMat::<U>::default();
   let ref rna_ids = struct_align_pair.0.rna_ids;
   let ref rna_ids_2 = struct_align_pair.1.rna_ids;
-  let ref pos_map_sets = struct_align_pair.0.pos_map_sets;
-  let ref pos_map_sets_2 = struct_align_pair.1.pos_map_sets;
+  let ref pos_map_sets = struct_align_pair.0.struct_align.seq_align.pos_map_sets;
+  let ref pos_map_sets_2 = struct_align_pair.1.struct_align.seq_align.pos_map_sets;
   let struct_align_len_pair = (
     U::from_usize(struct_align_len_pair.0).unwrap(),
     U::from_usize(struct_align_len_pair.1).unwrap(),
@@ -602,29 +623,28 @@ where
     feature_scores,
     &align_shell,
   );
-  let sa_len = new_mea_struct_align.cols.len();
-  let col_gaps_only = vec![PSEUDO_BASE; num_of_rnas];
+  let sa_len = new_mea_struct_align.struct_align.seq_align.pos_map_sets.len();
+  let pos_maps_with_gaps_only = vec![T::zero(); num_of_rnas];
   for i in (0..sa_len).rev() {
-    let ref col = new_mea_struct_align.cols[i];
-    if *col == col_gaps_only {
-      new_mea_struct_align.cols.remove(i);
-      new_mea_struct_align.pos_map_sets.remove(i);
+    let ref pos_maps = new_mea_struct_align.struct_align.seq_align.pos_map_sets[i];
+    if *pos_maps == pos_maps_with_gaps_only {
+      new_mea_struct_align.struct_align.seq_align.pos_map_sets.remove(i);
     }
   }
   if is_final {
-    let sa_len = new_mea_struct_align.cols.len();
+    let sa_len = new_mea_struct_align.struct_align.seq_align.pos_map_sets.len();
     for bp_pos_map_set_pair in &bp_pos_map_set_pairs {
       for i in 0..sa_len {
-        let ref pos_maps = new_mea_struct_align.pos_map_sets[i];
+        let ref pos_maps = new_mea_struct_align.struct_align.seq_align.pos_map_sets[i];
         if *pos_maps != bp_pos_map_set_pair.0 {
           continue;
         }
         let short_i = U::from_usize(i).unwrap();
         for j in i + 1..sa_len {
-          let ref pos_maps_2 = new_mea_struct_align.pos_map_sets[j];
+          let ref pos_maps_2 = new_mea_struct_align.struct_align.seq_align.pos_map_sets[j];
           if *pos_maps_2 == bp_pos_map_set_pair.1 {
             let short_j = U::from_usize(j).unwrap();
-            new_mea_struct_align.bp_col_pairs.insert((short_i, short_j));
+            new_mea_struct_align.struct_align.bp_pos_pairs.insert((short_i, short_j));
             break;
           }
         }
@@ -647,7 +667,7 @@ pub fn get_mea_mat<'a, T>(
   align_shell: &AlignShell<T>,
 ) -> SparseProbMat<T>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
   let (i, j, k, l) = *col_quadruple;
   let mut mea_mat = SparseProbMat::<T>::default();
@@ -728,8 +748,8 @@ pub fn update_mea_mats_with_col_pairs<'a, T, U>(
   mea_mat: &SparseProbMat<U>,
   align_weight_mat: &SparseProbMat<U>,
 ) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let (i, k) = *col_pair_left;
   let ref right_bp_cols = struct_align_pair.0.right_bp_col_sets_with_cols[&i];
@@ -768,8 +788,8 @@ pub fn traceback<'a, T, U>(
   feature_scores: &FeatureCountsPosterior,
   align_shell: &AlignShell<U>,
 ) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let rna_num_pair = (
     struct_align_pair.0.rna_ids.len(),
@@ -794,14 +814,12 @@ pub fn traceback<'a, T, U>(
           let col_pair_4_match = (u - U::one(), v - U::one());
           let ea = mea_mat[&col_pair_4_match] + align_prob_avg;
           if ea == mea {
-            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
-            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
-            new_col.append(&mut col_append);
-            new_mea_struct_align.cols.insert(0, new_col);
-            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
-            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
+            let mut new_pos_map_sets = struct_align_pair.0.struct_align.seq_align.pos_map_sets[long_u - 1].clone();
+            let mut pos_map_sets_append = struct_align_pair.1.struct_align.seq_align.pos_map_sets[long_v - 1].clone();
             new_pos_map_sets.append(&mut pos_map_sets_append);
             new_mea_struct_align
+              .struct_align
+              .seq_align
               .pos_map_sets
               .insert(0, new_pos_map_sets);
             u = u - U::one();
@@ -823,15 +841,13 @@ pub fn traceback<'a, T, U>(
               Some(&ea) => {
                 let ea = ea + mea_4_bpa;
                 if ea == mea {
-                  let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
-                  let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
-                  new_col.append(&mut col_append);
-                  new_mea_struct_align.cols.insert(0, new_col);
-                  let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+                  let mut new_pos_map_sets = struct_align_pair.0.struct_align.seq_align.pos_map_sets[long_u - 1].clone();
                   let mut pos_map_sets_append =
-                    struct_align_pair.1.pos_map_sets[long_v - 1].clone();
+                    struct_align_pair.1.struct_align.seq_align.pos_map_sets[long_v - 1].clone();
                   new_pos_map_sets.append(&mut pos_map_sets_append);
                   new_mea_struct_align
+                    .struct_align
+                    .seq_align
                     .pos_map_sets
                     .insert(0, new_pos_map_sets.clone());
                   traceback(
@@ -848,16 +864,14 @@ pub fn traceback<'a, T, U>(
                     col_pair_left.0.to_usize().unwrap(),
                     col_pair_left.1.to_usize().unwrap(),
                   );
-                  let mut new_col = struct_align_pair.0.cols[long_col_pair_left.0 - 1].clone();
-                  let mut col_append = struct_align_pair.1.cols[long_col_pair_left.1 - 1].clone();
-                  new_col.append(&mut col_append);
-                  new_mea_struct_align.cols.insert(0, new_col);
                   let mut new_pos_map_sets_2 =
-                    struct_align_pair.0.pos_map_sets[long_col_pair_left.0 - 1].clone();
+                    struct_align_pair.0.struct_align.seq_align.pos_map_sets[long_col_pair_left.0 - 1].clone();
                   let mut pos_map_sets_append =
-                    struct_align_pair.1.pos_map_sets[long_col_pair_left.1 - 1].clone();
+                    struct_align_pair.1.struct_align.seq_align.pos_map_sets[long_col_pair_left.1 - 1].clone();
                   new_pos_map_sets_2.append(&mut pos_map_sets_append);
                   new_mea_struct_align
+                    .struct_align
+                    .seq_align
                     .pos_map_sets
                     .insert(0, new_pos_map_sets_2.clone());
                   bp_pos_map_set_pairs.push((new_pos_map_sets_2, new_pos_map_sets));
@@ -881,14 +895,12 @@ pub fn traceback<'a, T, U>(
       match mea_mat.get(&(u - U::one(), v)) {
         Some(&ea) => {
           if ea == mea {
-            let mut new_col = struct_align_pair.0.cols[long_u - 1].clone();
-            let mut col_append = vec![PSEUDO_BASE; rna_num_pair.1];
-            new_col.append(&mut col_append);
-            new_mea_struct_align.cols.insert(0, new_col);
-            let mut new_pos_map_sets = struct_align_pair.0.pos_map_sets[long_u - 1].clone();
+            let mut new_pos_map_sets = struct_align_pair.0.struct_align.seq_align.pos_map_sets[long_u - 1].clone();
             let mut pos_map_sets_append = vec![T::zero(); rna_num_pair.1];
             new_pos_map_sets.append(&mut pos_map_sets_append);
             new_mea_struct_align
+              .struct_align
+              .seq_align
               .pos_map_sets
               .insert(0, new_pos_map_sets);
             u = u - U::one();
@@ -902,14 +914,12 @@ pub fn traceback<'a, T, U>(
       match mea_mat.get(&(u, v - U::one())) {
         Some(&ea) => {
           if ea == mea {
-            let mut new_col = vec![PSEUDO_BASE; rna_num_pair.0];
-            let mut col_append = struct_align_pair.1.cols[long_v - 1].clone();
-            new_col.append(&mut col_append);
-            new_mea_struct_align.cols.insert(0, new_col);
             let mut new_pos_map_sets = vec![T::zero(); rna_num_pair.0];
-            let mut pos_map_sets_append = struct_align_pair.1.pos_map_sets[long_v - 1].clone();
+            let mut pos_map_sets_append = struct_align_pair.1.struct_align.seq_align.pos_map_sets[long_v - 1].clone();
             new_pos_map_sets.append(&mut pos_map_sets_append);
             new_mea_struct_align
+              .struct_align
+              .seq_align
               .pos_map_sets
               .insert(0, new_pos_map_sets);
             v = v - U::one();
@@ -927,7 +937,6 @@ pub fn revert_char(c: Base) -> u8 {
     C => BIG_C,
     G => BIG_G,
     U => BIG_U,
-    PSEUDO_BASE => GAP,
     _ => {
       assert!(false);
       GAP
@@ -937,14 +946,12 @@ pub fn revert_char(c: Base) -> u8 {
 
 pub fn consalifold<T>(
   mix_bpp_mat: &SparseProbMat<T>,
-  cols: &Cols,
+  sa_len: T,
   basepair_count_posterior: Prob,
 ) -> SparsePosMat<T>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
-  let sa_len = cols.len();
-  let sa_len = T::from_usize(sa_len).unwrap();
   let mix_bpp_mat: SparseProbMat<T> = mix_bpp_mat
     .iter()
     .filter(|x| basepair_count_posterior * x.1 - 1. >= 0.)
@@ -995,7 +1002,7 @@ pub fn traceback_alifold<T>(
   col_pair: &PosPair<T>,
   mea_sets_with_cols: &MeaSetsWithPoss<T>,
 ) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
   let mut mea;
   let meas = get_meas(&mea_sets_with_cols, &col_pair);
@@ -1037,7 +1044,7 @@ pub fn update_mea_sets_with_cols<T>(
   meas: &SparseProbs<T>,
   right_bp_cols_with_cols: &ColSetsWithCols<T>,
 ) where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
   let ref right_bp_cols = right_bp_cols_with_cols[&i];
   for &(j, weight) in right_bp_cols {
@@ -1057,7 +1064,7 @@ pub fn update_mea_sets_with_cols<T>(
 
 pub fn get_meas<T>(mea_sets_with_cols: &MeaSetsWithPoss<T>, col_pair: &PosPair<T>) -> SparseProbs<T>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
   let (i, j) = *col_pair;
   let mut meas = SparseProbs::<T>::default();
@@ -1087,18 +1094,22 @@ where
   meas
 }
 
+pub fn run_command(command: &str, args: &[&str], expect: &str) -> Output {
+  Command::new(command).args(args).output().expect(expect)
+}
+
 pub fn get_bpp_mat_alifold<T, U>(
   sa: &MeaStructAlign<T, U>,
   sa_file_path: &Path,
   fasta_records: &FastaRecords,
 ) -> SparseProbMat<U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
   let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
-  let sa_len = sa.cols.len();
+  let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
   let fasta_ids: Vec<FastaId> = sa
     .rna_ids
     .iter()
@@ -1109,8 +1120,16 @@ where
     let ref seq_id = fasta_records[rna_id].fasta_id;
     buf_4_writer_2_sa_file.push_str(seq_id);
     let mut clustal_row = vec![' ' as Char; max_seq_id_len - seq_id.len() + 2];
+    let ref seq = sa.struct_align.seq_align.seqs[i];
     let mut sa_row = (0..sa_len)
-      .map(|x| revert_char(sa.cols[x][i]))
+      .map(|x| {
+        let pos_map = sa.struct_align.seq_align.pos_map_sets[x][i].to_usize().unwrap();
+        if pos_map == 0 {
+          GAP
+        } else {
+          revert_char(seq[pos_map])
+        }
+      })
       .collect::<Vec<Char>>();
     clustal_row.append(&mut sa_row);
     let clustal_row = unsafe { from_utf8_unchecked(&clustal_row) };
@@ -1142,8 +1161,8 @@ where
       continue;
     }
     let substrings: Vec<&str> = line.split_whitespace().collect();
-    let i = U::from_usize(substrings[0].parse().unwrap()).unwrap() - U::one();
-    let j = U::from_usize(substrings[1].parse().unwrap()).unwrap() - U::one();
+    let i = U::from_usize(substrings[0].parse().unwrap()).unwrap();
+    let j = U::from_usize(substrings[1].parse().unwrap()).unwrap();
     let mut bpp = String::from(substrings[3]);
     bpp.pop();
     let bpp = 0.01 * bpp.parse::<Prob>().unwrap();
@@ -1157,10 +1176,6 @@ where
   bpp_mat_alifold
 }
 
-pub fn run_command(command: &str, args: &[&str], expect: &str) -> Output {
-  Command::new(command).args(args).output().expect(expect)
-}
-
 pub fn get_mix_bpp_mat<T, U>(
   sa: &MeaStructAlign<T, U>,
   bpp_mats: &SparseProbMats<T>,
@@ -1168,18 +1183,18 @@ pub fn get_mix_bpp_mat<T, U>(
   disable_alifold: bool,
 ) -> SparseProbMat<U>
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
-  U: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
+  U: HashIndex,
 {
   let mut mix_bpp_mat = SparseProbMat::<U>::default();
-  let sa_len = sa.cols.len();
+  let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
   let num_of_rnas = sa.rna_ids.len();
   for i in 0..sa_len {
-    let ref pos_maps = sa.pos_map_sets[i];
+    let ref pos_maps = sa.struct_align.seq_align.pos_map_sets[i];
     let short_i = U::from_usize(i).unwrap();
     for j in i + 1..sa_len {
       let short_j = U::from_usize(j).unwrap();
-      let pos_pair = (short_i, short_j);
+      let pos_pair = (short_i + U::one(), short_j + U::one());
       let bpp_alifold = if disable_alifold {
         NEG_INFINITY
       } else {
@@ -1188,7 +1203,7 @@ where
           None => 0.,
         }
       };
-      let ref pos_maps_2 = sa.pos_map_sets[j];
+      let ref pos_maps_2 = sa.struct_align.seq_align.pos_map_sets[j];
       let pos_map_pairs: Vec<(T, T)> = pos_maps
         .iter()
         .zip(pos_maps_2.iter())
@@ -1210,8 +1225,7 @@ where
       } else {
         MIX_COEFF * bpp_avg + (1. - MIX_COEFF) * bpp_alifold
       };
-      if mix_bpp >= 0. {
-        let pos_pair = (pos_pair.0 + U::one(), pos_pair.1 + U::one());
+      if mix_bpp > 0. {
         mix_bpp_mat.insert(pos_pair, mix_bpp);
       }
     }
@@ -1224,7 +1238,7 @@ pub fn get_insert_prob_set_pair<T>(
   seq_len_pair: &(usize, usize),
 ) -> ProbSetPair
 where
-  T: Unsigned + PrimInt + Hash + FromPrimitive + Integer + Ord + Sync + Send + Display,
+  T: HashIndex,
 {
   let mut insert_prob_set_pair = (vec![1.; seq_len_pair.0], vec![1.; seq_len_pair.1]);
   for (&(i, j), align_prob) in align_prob_mat {
