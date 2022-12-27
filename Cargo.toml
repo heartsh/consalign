@@ -5,7 +5,7 @@ authors = ["heartsh <heartsh@heartsh.io>"]
 description = "Trainable RNA Structural Aligner"
 repository = "https://github.com/heartsh/consalign"
 readme = "README.md"
-keywords = ["bioinformatics", "rna", "sequence-alignment"]
+keywords = ["bioinformatics", "rna", "structural-alignment"]
 license = "MIT"
 
 [dependencies]

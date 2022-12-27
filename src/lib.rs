@@ -1,5 +1,4 @@
 extern crate consprob_trained;
-extern crate num_cpus;
 extern crate petgraph;
 
 pub use consprob_trained::*;

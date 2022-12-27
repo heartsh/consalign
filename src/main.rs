@@ -1,4 +1,5 @@
 extern crate consalign;
+extern crate num_cpus;
 extern crate crossbeam;
 
 use consalign::*;
@@ -241,13 +242,14 @@ fn multi_threaded_consalign<T, U>(
       &FeatureCountSets::load_trained_score_params(),
     );
   }
+  let seqs = fasta_records.iter().map(|x| &x.seq[..]).collect();
   let (prob_mat_sets_turner, align_prob_mat_pairs_with_rna_id_pairs_turner) =
     if matches!(scoring_model, ScoringModel::Ensemble)
       || matches!(scoring_model, ScoringModel::Turner)
     {
       consprob::<T>(
         thread_pool,
-        fasta_records,
+        &seqs,
         min_bpp_turner,
         min_align_prob_turner,
         false,
@@ -277,7 +279,7 @@ fn multi_threaded_consalign<T, U>(
     {
       consprob_trained::<T>(
         thread_pool,
-        fasta_records,
+        &seqs,
         min_bpp,
         min_align_prob,
         false,
