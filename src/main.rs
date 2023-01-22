@@ -428,7 +428,7 @@ fn multi_threaded_consalign<T, U>(
   let bpp_mat_alifold = if disable_alifold {
     SparseProbMat::<U>::default()
   } else {
-    get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records)
+    get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records, output_dir_path)
   };
   let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats_fused, &bpp_mat_alifold, disable_alifold);
   let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
