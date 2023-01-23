@@ -40,6 +40,14 @@ $ # ConsAlign parameterized with your trained parameters will be called
 $ consalign
 ```
 
+# Docker Playground <img src="./assets/images_fixed/docker_logo.png" width="40">
+I offer [my Docker-based playground for RNA software and its instruction](https://github.com/heartsh/rna-playground) to replay my computational experiments easily.
+
+# Method Digest
+[ConsProb-Turner](https://github.com/heartsh/consprob) and [ConsProb-Trained](https://github.com/heartsh/consprob-trained) infer sparse posterior matching/base-pairing probabilities on RNA pairwise structural alignment using [Turner's model and the CONTRAfold models](https://github.com/heartsh/rna-ss-params).
+This repository offers ConsAlign, transfer-learned RNA structural aligner combining ConsProb-Turner and ConsProb-trained.
+When you run ConsAlign, it automatically determines its alignment prediction hyper-parameters by maximizing expected sum-of-pairs scores.
+
 # Author
 [Heartsh](https://github.com/heartsh)
 
