@@ -23,8 +23,8 @@ To train ConsAlign, you first need to install ConsTrain, a training tool of Cons
 Then, you pass ConsTrain your training data and install ConsAlign with your trained parameters.
 You can do the above training recipe as follows:
 ```bash
-$ git clone https://github.com/heartsh/consalign && cd consalign
-$ ./run_constrain.sh train_data_dir_path train_log_file_path
+$ git clone https://github.com/heartsh/consalign && cd consalign/consprob-trained/scripts
+$ ./constrain_using_your_data.sh train_data_dir_path train_log_file_path
 ```
 
 # Docker Playground <img src="./assets/images_fixed/docker_logo.png" width="40">
