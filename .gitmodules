@@ -1,3 +1,6 @@
 [submodule "rna-playground"]
 	path = rna-playground
 	url = git@github.com:heartsh/rna-playground
+[submodule "consprob-trained"]
+	path = consprob-trained
+	url = git@github.com:heartsh/consprob-trained

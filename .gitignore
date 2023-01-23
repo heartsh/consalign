@@ -5,6 +5,7 @@ target
 !*.py
 !*.tar.bz2
 !*.png
+!*.sh
 !Cargo.toml
 !rustfmt.toml
 !.gitignore
