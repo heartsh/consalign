@@ -1,4 +1,4 @@
-# Trainable RNA Structural Aligner
+# RNA Structural Aligner Based on Transfer-learning and Thermodynamic Ensemble Model
 # Installation
 This project is written mainly in Rust, a systems programming language.
 You need to install Rust components, i.e., rustc (the Rust compiler), cargo (the Rust package manager), and the Rust standard library.
@@ -19,7 +19,7 @@ $ consalign # Its available command options will be displayed.
 ```
 
 # Train ConsAlign Using Your Training Data
-To train ConsAlign, you first need to install ConsTrain, a training tool of ConsProb (ConsAlign's back engine).
+To train ConsAlign, you first need to install ConsTrain, a training tool for ConsProb (ConsAlign's back engine).
 Then, you pass ConsTrain your training data and install ConsAlign with your trained parameters.
 You can do the above training recipe as follows:
 ```bash
@@ -32,8 +32,8 @@ $ ./constrain_using_your_data.sh train_data_dir_path train_log_file_path
 I offer [my Docker-based playground for RNA software and its instruction](https://github.com/heartsh/rna-playground) to replay my computational experiments easily.
 
 # Method Digest
-[ConsProb-Turner](https://github.com/heartsh/consprob) and [ConsProb-Trained](https://github.com/heartsh/consprob-trained) infer sparse posterior matching/base-pairing probabilities on RNA pairwise structural alignment using [Turner's model and the CONTRAfold models](https://github.com/heartsh/rna-ss-params), respectively.
-This repository offers ConsAlign, transfer-learned RNA structural aligner combining ConsProb-Turner and ConsProb-trained.
+[ConsProb-Turner](https://github.com/heartsh/consprob) and [ConsProb-trained](https://github.com/heartsh/consprob-trained) infer sparse posterior matching/base-pairing probabilities on RNA pairwise structural alignment using [Turner's model and the CONTRAfold models](https://github.com/heartsh/rna-ss-params), respectively.
+This repository offers ConsAlign, a transfer-learned RNA structural aligner combining ConsProb-Turner and ConsProb-trained.
 When you run ConsAlign, it automatically determines its alignment prediction hyper-parameters by maximizing expected sum-of-pairs scores.
 
 # Author
