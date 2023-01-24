@@ -2,7 +2,7 @@
 name = "consalign"
 version = "0.1.6"
 authors = ["heartsh <heartsh@heartsh.io>"]
-description = "Trainable RNA Structural Aligner"
+description = "RNA Structural Aligner Based on Transfer-learning and Thermodynamic Ensemble Model"
 repository = "https://github.com/heartsh/consalign"
 readme = "README.md"
 keywords = ["bioinformatics", "rna", "structural-alignment"]
