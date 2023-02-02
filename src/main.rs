@@ -24,8 +24,7 @@ fn main() {
     "",
     "min_base_pair_prob",
     &format!(
-      "A minimum base-pairing probability (Use {} by default)",
-      DEFAULT_MIN_BPP_ALIGN
+      "A minimum base-pairing probability (Use {DEFAULT_MIN_BPP_ALIGN} by default)"
     ),
     "FLOAT",
   );
@@ -33,8 +32,7 @@ fn main() {
     "",
     "min_align_prob",
     &format!(
-      "A minimum aligning probability (Use {} by default)",
-      DEFAULT_MIN_ALIGN_PROB_ALIGN
+      "A minimum aligning probability (Use {DEFAULT_MIN_ALIGN_PROB_ALIGN} by default)"
     ),
     "FLOAT",
   );
@@ -42,8 +40,7 @@ fn main() {
     "",
     "min_base_pair_prob_turner",
     &format!(
-      "A minimum base-pairing probability for Turner's model (Use {} by default)",
-      DEFAULT_MIN_BPP_ALIGN_TURNER
+      "A minimum base-pairing probability for Turner's model (Use {DEFAULT_MIN_BPP_ALIGN_TURNER} by default)"
     ),
     "FLOAT",
   );
@@ -51,17 +48,16 @@ fn main() {
     "",
     "min_align_prob_turner",
     &format!(
-      "A minimum aligning probability for Turner's model (Use {} by default)",
-      DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER
+      "A minimum aligning probability for Turner's model (Use {DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER} by default)"
     ),
     "FLOAT",
   );
-  opts.optopt("m", "scoring_model", &format!("Choose a structural alignment scoring model from ensemble, turner, trained (Use {} by default)", DEFAULT_SCORING_MODEL), "STR");
-  opts.optopt("u", "train_type", &format!("Choose a scoring parameter training type from trained_transfer, trained_random_init, transferred_only (Use {} by default)", DEFAULT_TRAIN_TYPE), "STR");
+  opts.optopt("m", "scoring_model", &format!("Choose a structural alignment scoring model from ensemble, turner, trained (Use {DEFAULT_SCORING_MODEL} by default)"), "STR");
+  opts.optopt("u", "train_type", &format!("Choose a scoring parameter training type from trained_transfer, trained_random_init, transferred_only (Use {DEFAULT_TRAIN_TYPE} by default)"), "STR");
   opts.optflag(
     "d",
     "disable_alifold",
-    &format!("Disable RNAalifold used in ConsAlifold"),
+    "Disable RNAalifold used in ConsAlifold",
   );
   opts.optflag(
     "p",
@@ -238,7 +234,7 @@ fn multi_threaded_consalign<T, U>(
     min_align_prob_turner,
     disable_transplant,
   );
-  let output_file_path = output_dir_path.join(&format!("consalign.sth"));
+  let output_file_path = output_dir_path.join("consalign.sth");
   write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores);
   let mut readme_contents = String::from(README_CONTENTS_2);
   readme_contents.push_str(README_CONTENTS);
@@ -270,11 +266,11 @@ fn write_stockholm_file<T, U>(
   let max_seq_id_len = max_seq_id_len.max(descriptor_len);
   let num_of_rnas = sa.rna_ids.len();
   for rna_id in 0..num_of_rnas {
-    let ref seq_id = fasta_records[rna_id].fasta_id;
+    let seq_id = &fasta_records[rna_id].fasta_id;
     buf_4_writer_2_output_file.push_str(seq_id);
-    let mut stockholm_row = vec![' ' as Char; max_seq_id_len - seq_id.len() + 2];
-    let ref fasta_record = fasta_records[rna_id];
-    let ref seq = fasta_record.seq;
+    let mut stockholm_row = vec![b' '; max_seq_id_len - seq_id.len() + 2];
+    let fasta_record = &fasta_records[rna_id];
+    let seq = &fasta_record.seq;
     let mut sa_row = (0..sa_len)
       .map(|x| {
         let pos_map = sa.struct_align.seq_align.pos_map_sets[x][rna_id]
@@ -289,15 +285,15 @@ fn write_stockholm_file<T, U>(
       .collect::<Vec<Char>>();
     stockholm_row.append(&mut sa_row);
     let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
-    buf_4_writer_2_output_file.push_str(&stockholm_row);
-    buf_4_writer_2_output_file.push_str("\n");
+    buf_4_writer_2_output_file.push_str(stockholm_row);
+    buf_4_writer_2_output_file.push('\n');
   }
   buf_4_writer_2_output_file.push_str(descriptor);
-  let mut stockholm_row = vec![' ' as Char; max_seq_id_len - descriptor_len + 2];
-  let mut mea_css_str = get_mea_css_str(&sa, sa_len);
+  let mut stockholm_row = vec![b' '; max_seq_id_len - descriptor_len + 2];
+  let mut mea_css_str = get_mea_css_str(sa, sa_len);
   stockholm_row.append(&mut mea_css_str);
   let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
-  buf_4_writer_2_output_file.push_str(&stockholm_row);
+  buf_4_writer_2_output_file.push_str(stockholm_row);
   buf_4_writer_2_output_file.push_str("\n//");
   let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
 }

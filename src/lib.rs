@@ -84,9 +84,9 @@ where
     let sa_len = self.struct_align.seq_align.pos_map_sets.len();
     let num_of_rnas = self.rna_ids.len();
     for i in 0..sa_len {
-      let ref pos_maps = self.struct_align.seq_align.pos_map_sets[i];
+      let pos_maps = &self.struct_align.seq_align.pos_map_sets[i];
       for j in i + 1..sa_len {
-        let ref pos_maps_2 = self.struct_align.seq_align.pos_map_sets[j];
+        let pos_maps_2 = &self.struct_align.seq_align.pos_map_sets[j];
         let pos_map_pairs: Vec<(T, T)> = pos_maps
           .iter()
           .zip(pos_maps_2.iter())
@@ -94,7 +94,7 @@ where
           .collect();
         let mut bpp_sum = 0.;
         for (pos_map_pair, &rna_id) in pos_map_pairs.iter().zip(self.rna_ids.iter()) {
-          let ref bpp_mat = bpp_mats[rna_id];
+          let bpp_mat = &bpp_mats[rna_id];
           match bpp_mat.get(pos_map_pair) {
             Some(&bpp) => {
               bpp_sum += bpp;
@@ -149,11 +149,10 @@ where
         } else {
           (rna_id_2, rna_id)
         };
-        let ref align_prob_mat = align_prob_mats_with_rna_id_pairs[&ordered_rna_id_pair];
-        let ref insert_prob_set_pair =
-          insert_prob_set_pairs_with_rna_id_pairs[&ordered_rna_id_pair];
+        let align_prob_mat = &align_prob_mats_with_rna_id_pairs[&ordered_rna_id_pair];
+        let insert_prob_set_pair = &insert_prob_set_pairs_with_rna_id_pairs[&ordered_rna_id_pair];
         for k in 0..sa_len {
-          let ref pos_maps = self.struct_align.seq_align.pos_map_sets[k];
+          let pos_maps = &self.struct_align.seq_align.pos_map_sets[k];
           let pos = pos_maps[i];
           let pos_2 = pos_maps[j];
           let pos_pair = if rna_id < rna_id_2 {
@@ -227,7 +226,7 @@ impl<T: HashIndex, U: HashIndex> StructAlign<T, U> {
   }
 }
 
-pub const GAP: Char = '-' as Char;
+pub const GAP: Char = b'-';
 pub const MIN_LOG_GAMMA_BASEPAIR: i32 = 0;
 pub const MIN_LOG_GAMMA_ALIGN: i32 = MIN_LOG_GAMMA_BASEPAIR;
 pub const MAX_LOG_GAMMA_BASEPAIR: i32 = 3;
@@ -248,7 +247,7 @@ pub const DEFAULT_MIN_ALIGN_PROB_ALIGN: Prob = 2. * DEFAULT_MIN_ALIGN_PROB;
 pub const DEFAULT_MIN_BPP_ALIGN_TURNER: Prob = DEFAULT_MIN_BPP;
 pub const DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER: Prob = DEFAULT_MIN_ALIGN_PROB;
 pub const MIX_COEFF: Prob = 0.5;
-pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str =
+pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &str =
   "../src/trained_feature_scores.rs";
 pub const BASEPAIR_COUNT_POSTERIOR_ALIFOLD: Prob = 2.;
 pub const DEFAULT_SCORING_MODEL: &str = "ensemble";
@@ -275,7 +274,7 @@ where
   for i in 0..num_of_rnas {
     for j in i + 1..num_of_rnas {
       let rna_id_pair = (i, j);
-      let ref align_prob_mat = align_prob_mats_with_rna_id_pairs[&rna_id_pair];
+      let align_prob_mat = &align_prob_mats_with_rna_id_pairs[&rna_id_pair];
       let mea = align_prob_mat
         .values()
         .filter(|&x| feature_scores.align_count_posterior * x - 1. >= 0.)
@@ -289,7 +288,7 @@ where
     node_indexes.insert(i, node_index);
   }
   let mut new_cluster_id = num_of_rnas;
-  while mea_mat.len() > 0 {
+  while !mea_mat.is_empty() {
     let mut max = NEG_INFINITY;
     let mut argmax = (0, 0);
     for (cluster_id_pair, &ea) in &mea_mat {
@@ -362,7 +361,7 @@ where
     root,
     align_prob_mats_with_rna_id_pairs,
     bpp_mats,
-    &fasta_records,
+    fasta_records,
     feature_scores,
     insert_prob_set_pairs_with_rna_id_pairs,
     true,
@@ -386,7 +385,7 @@ where
   let num_of_rnas = fasta_records.len();
   let rna_id = *progressive_tree.node_weight(node).unwrap();
   if rna_id < num_of_rnas {
-    let ref seq = fasta_records[rna_id].seq;
+    let seq = &fasta_records[rna_id].seq;
     convert_seq(seq, rna_id, bpp_mats, feature_scores)
   } else {
     let mut neighbors = progressive_tree.neighbors_directed(node, Outgoing).detach();
@@ -475,10 +474,10 @@ where
   let num_of_rnas = rna_num_pair.0 + rna_num_pair.1;
   let denom = (rna_num_pair.0 * rna_num_pair.1) as Prob;
   let mut align_weight_mat = SparseProbMat::<U>::default();
-  let ref rna_ids = struct_align_pair.0.rna_ids;
-  let ref rna_ids_2 = struct_align_pair.1.rna_ids;
-  let ref pos_map_sets = struct_align_pair.0.struct_align.seq_align.pos_map_sets;
-  let ref pos_map_sets_2 = struct_align_pair.1.struct_align.seq_align.pos_map_sets;
+  let rna_ids = &struct_align_pair.0.rna_ids;
+  let rna_ids_2 = &struct_align_pair.1.rna_ids;
+  let pos_map_sets = &struct_align_pair.0.struct_align.seq_align.pos_map_sets;
+  let pos_map_sets_2 = &struct_align_pair.1.struct_align.seq_align.pos_map_sets;
   let struct_align_len_pair = (
     U::from_usize(struct_align_len_pair.0).unwrap(),
     U::from_usize(struct_align_len_pair.1).unwrap(),
@@ -492,12 +491,12 @@ where
   let mut align_shell = AlignShell::<U>::default();
   for i in range_inclusive(U::one(), struct_align_len_pair.0) {
     let long_i = i.to_usize().unwrap();
-    let ref pos_maps = pos_map_sets[long_i - 1];
+    let pos_maps = &pos_map_sets[long_i - 1];
     for j in range_inclusive(U::one(), struct_align_len_pair.1) {
       let col_pair = (i, j);
       let long_j = j.to_usize().unwrap();
       let mut align_prob_sum = 0.;
-      let ref pos_maps_2 = pos_map_sets_2[long_j - 1];
+      let pos_maps_2 = &pos_map_sets_2[long_j - 1];
       for (&rna_id, &pos) in rna_ids.iter().zip(pos_maps.iter()) {
         for (&rna_id_2, &pos_2) in rna_ids_2.iter().zip(pos_maps_2.iter()) {
           let ordered_rna_id_pair = if rna_id < rna_id_2 {
@@ -505,7 +504,7 @@ where
           } else {
             (rna_id_2, rna_id)
           };
-          let ref align_prob_mat = align_prob_mats_with_rna_id_pairs[&ordered_rna_id_pair];
+          let align_prob_mat = &align_prob_mats_with_rna_id_pairs[&ordered_rna_id_pair];
           let pos_pair = if rna_id < rna_id_2 {
             (pos, pos_2)
           } else {
@@ -639,7 +638,7 @@ where
     .len();
   let pos_maps_with_gaps_only = vec![T::zero(); num_of_rnas];
   for i in (0..sa_len).rev() {
-    let ref pos_maps = new_mea_struct_align.struct_align.seq_align.pos_map_sets[i];
+    let pos_maps = &new_mea_struct_align.struct_align.seq_align.pos_map_sets[i];
     if *pos_maps == pos_maps_with_gaps_only {
       new_mea_struct_align
         .struct_align
@@ -656,13 +655,13 @@ where
       .len();
     for bp_pos_map_set_pair in &bp_pos_map_set_pairs {
       for i in 0..sa_len {
-        let ref pos_maps = new_mea_struct_align.struct_align.seq_align.pos_map_sets[i];
+        let pos_maps = &new_mea_struct_align.struct_align.seq_align.pos_map_sets[i];
         if *pos_maps != bp_pos_map_set_pair.0 {
           continue;
         }
         let short_i = U::from_usize(i).unwrap();
         for j in i + 1..sa_len {
-          let ref pos_maps_2 = new_mea_struct_align.struct_align.seq_align.pos_map_sets[j];
+          let pos_maps_2 = &new_mea_struct_align.struct_align.seq_align.pos_map_sets[j];
           if *pos_maps_2 == bp_pos_map_set_pair.1 {
             let short_j = U::from_usize(j).unwrap();
             new_mea_struct_align
@@ -776,8 +775,8 @@ pub fn update_mea_mats_with_col_pairs<'a, T, U>(
   U: HashIndex,
 {
   let (i, k) = *col_pair_left;
-  let ref right_bp_cols = struct_align_pair.0.right_bp_col_sets_with_cols[&i];
-  let ref right_bp_cols_2 = struct_align_pair.1.right_bp_col_sets_with_cols[&k];
+  let right_bp_cols = &struct_align_pair.0.right_bp_col_sets_with_cols[&i];
+  let right_bp_cols_2 = &struct_align_pair.1.right_bp_col_sets_with_cols[&k];
   let align_weight_left = align_weight_mat[col_pair_left];
   for &(j, weight) in right_bp_cols.iter() {
     for &(l, weight_2) in right_bp_cols_2.iter() {
@@ -821,9 +820,9 @@ pub fn traceback<'a, T, U>(
   );
   let mut mea;
   let mea_mat = get_mea_mat(
-    &mea_mats_with_col_pairs,
-    &align_weight_mat,
-    &col_quadruple,
+    mea_mats_with_col_pairs,
+    align_weight_mat,
+    col_quadruple,
     align_shell,
   );
   let (i, j, k, l) = *col_quadruple;
@@ -1038,7 +1037,7 @@ pub fn traceback_alifold<T>(
   T: HashIndex,
 {
   let mut mea;
-  let meas = get_meas(&mea_sets_with_cols, &col_pair);
+  let meas = get_meas(mea_sets_with_cols, col_pair);
   let (i, j) = *col_pair;
   let mut k = j - T::one();
   while k > i {
@@ -1050,7 +1049,7 @@ pub fn traceback_alifold<T>(
     match mea_sets_with_cols.get(&k) {
       Some(meas_4_bps) => {
         for (&col_left, mea_4_bp) in meas_4_bps {
-          if !(i < col_left) {
+          if i >= col_left {
             continue;
           }
           let col_4_bp = col_left - T::one();
@@ -1079,7 +1078,7 @@ pub fn update_mea_sets_with_cols<T>(
 ) where
   T: HashIndex,
 {
-  let ref right_bp_cols = right_bp_cols_with_cols[&i];
+  let right_bp_cols = &right_bp_cols_with_cols[&i];
   for &(j, weight) in right_bp_cols {
     let mea_4_bp = weight + meas[&(j - T::one())];
     match mea_sets_with_cols.get_mut(&j) {
@@ -1110,7 +1109,7 @@ where
     match mea_sets_with_cols.get(&k) {
       Some(meas_4_bps) => {
         for (&l, mea_4_bp) in meas_4_bps {
-          if !(i < l) {
+          if i >= l {
             continue;
           }
           let ea = meas[&(l - T::one())];
@@ -1144,7 +1143,7 @@ where
   let cwd = env::current_dir().unwrap();
   let sa_file_path = cwd.join(sa_file_path);
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
-  let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
+  let mut buf_4_writer_2_sa_file = "CLUSTAL format sequence alignment\n\n".to_string();
   let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
   let fasta_ids: Vec<FastaId> = sa
     .rna_ids
@@ -1153,10 +1152,10 @@ where
     .collect();
   let max_seq_id_len = fasta_ids.iter().map(|x| x.len()).max().unwrap();
   for (i, &rna_id) in sa.rna_ids.iter().enumerate() {
-    let ref seq_id = fasta_records[rna_id].fasta_id;
+    let seq_id = &fasta_records[rna_id].fasta_id;
     buf_4_writer_2_sa_file.push_str(seq_id);
-    let mut clustal_row = vec![' ' as Char; max_seq_id_len - seq_id.len() + 2];
-    let ref seq = sa.struct_align.seq_align.seqs[i];
+    let mut clustal_row = vec![b' '; max_seq_id_len - seq_id.len() + 2];
+    let seq = &sa.struct_align.seq_align.seqs[i];
     let mut sa_row = (0..sa_len)
       .map(|x| {
         let pos_map = sa.struct_align.seq_align.pos_map_sets[x][i]
@@ -1171,13 +1170,13 @@ where
       .collect::<Vec<Char>>();
     clustal_row.append(&mut sa_row);
     let clustal_row = unsafe { from_utf8_unchecked(&clustal_row) };
-    buf_4_writer_2_sa_file.push_str(&clustal_row);
-    buf_4_writer_2_sa_file.push_str("\n");
+    buf_4_writer_2_sa_file.push_str(clustal_row);
+    buf_4_writer_2_sa_file.push('\n');
   }
   let _ = writer_2_sa_file.write_all(buf_4_writer_2_sa_file.as_bytes());
   let _ = writer_2_sa_file.flush();
   let sa_file_prefix = sa_file_path.file_stem().unwrap().to_str().unwrap();
-  let arg = format!("--id-prefix={}", sa_file_prefix);
+  let arg = format!("--id-prefix={sa_file_prefix}");
   let args = vec![
     "-p",
     sa_file_path.to_str().unwrap(),
@@ -1185,7 +1184,7 @@ where
     "--noPS",
     "--noDP",
   ];
-  let _ = env::set_current_dir(&output_dir_path);
+  let _ = env::set_current_dir(output_dir_path);
   let _ = run_command("RNAalifold", &args, "Failed to run RNAalifold");
   let _ = env::set_current_dir(cwd);
   let mut bpp_mat_alifold = SparseProbMat::<U>::default();
@@ -1196,7 +1195,7 @@ where
       continue;
     }
     let line = line.unwrap();
-    if !line.starts_with(" ") {
+    if !line.starts_with(' ') {
       continue;
     }
     let substrings: Vec<&str> = line.split_whitespace().collect();
@@ -1229,7 +1228,7 @@ where
   let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
   let num_of_rnas = sa.rna_ids.len();
   for i in 0..sa_len {
-    let ref pos_maps = sa.struct_align.seq_align.pos_map_sets[i];
+    let pos_maps = &sa.struct_align.seq_align.pos_map_sets[i];
     let short_i = U::from_usize(i).unwrap();
     for j in i + 1..sa_len {
       let short_j = U::from_usize(j).unwrap();
@@ -1242,7 +1241,7 @@ where
           None => 0.,
         }
       };
-      let ref pos_maps_2 = sa.struct_align.seq_align.pos_map_sets[j];
+      let pos_maps_2 = &sa.struct_align.seq_align.pos_map_sets[j];
       let pos_map_pairs: Vec<(T, T)> = pos_maps
         .iter()
         .zip(pos_maps_2.iter())
@@ -1250,7 +1249,7 @@ where
         .collect();
       let mut bpp_sum = 0.;
       for (pos_map_pair, &rna_id) in pos_map_pairs.iter().zip(sa.rna_ids.iter()) {
-        let ref bpp_mat = bpp_mats[rna_id];
+        let bpp_mat = &bpp_mats[rna_id];
         match bpp_mat.get(pos_map_pair) {
           Some(&bpp) => {
             bpp_sum += bpp;
@@ -1416,8 +1415,8 @@ where
     thread_pool.scoped(|scope| {
       for (rna_id_pair, align_prob_mat_fused) in align_prob_mats_with_rna_id_pairs_fused.iter_mut()
       {
-        let ref align_prob_mat_turner = align_prob_mats_with_rna_id_pairs_turner[rna_id_pair];
-        let ref align_prob_mat_trained = align_prob_mats_with_rna_id_pairs_trained[rna_id_pair];
+        let align_prob_mat_turner = &align_prob_mats_with_rna_id_pairs_turner[rna_id_pair];
+        let align_prob_mat_trained = &align_prob_mats_with_rna_id_pairs_trained[rna_id_pair];
         scope.execute(move || {
           *align_prob_mat_fused = align_prob_mat_turner
             .iter()
@@ -1446,7 +1445,7 @@ where
   }
   thread_pool.scoped(|scope| {
     for (rna_id_pair, insert_prob_set_pair) in insert_prob_set_pairs_with_rna_id_pairs.iter_mut() {
-      let ref align_prob_mat = align_prob_mats_with_rna_id_pairs_fused[rna_id_pair];
+      let align_prob_mat = &align_prob_mats_with_rna_id_pairs_fused[rna_id_pair];
       let seq_len_pair = (
         fasta_records[rna_id_pair.0].seq.len(),
         fasta_records[rna_id_pair.1].seq.len(),
@@ -1460,7 +1459,7 @@ where
     let _ = create_dir(output_dir_path);
   }
   let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
-  let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
+  let sa_file_path = output_dir_path.join(&format!("{input_file_prefix}.aln"));
   let mut candidates = Vec::new();
   for log_gamma_align in MIN_LOG_GAMMA_ALIGN..MAX_LOG_GAMMA_ALIGN + 1 {
     let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
@@ -1472,9 +1471,9 @@ where
     }
   }
   thread_pool.scoped(|scope| {
-    let ref ref_2_align_prob_mats_with_rna_id_pairs = align_prob_mats_with_rna_id_pairs_fused;
-    let ref ref_2_bpp_mats = bpp_mats_fused;
-    let ref ref_2_insert_prob_set_pairs_with_rna_id_pairs = insert_prob_set_pairs_with_rna_id_pairs;
+    let ref_2_align_prob_mats_with_rna_id_pairs = &align_prob_mats_with_rna_id_pairs_fused;
+    let ref_2_bpp_mats = &bpp_mats_fused;
+    let ref_2_insert_prob_set_pairs_with_rna_id_pairs = &insert_prob_set_pairs_with_rna_id_pairs;
     for candidate in &mut candidates {
       scope.execute(move || {
         candidate.1 = consalign::<T, U>(
@@ -1490,7 +1489,7 @@ where
   let mut sa = MeaStructAlign::new();
   let mut feature_scores = FeatureCountsPosterior::new(0.);
   for candidate in &candidates {
-    let ref tmp_sa = candidate.1;
+    let tmp_sa = &candidate.1;
     if tmp_sa.sps > sa.sps {
       feature_scores = candidate.0.clone();
       sa = tmp_sa.clone();
