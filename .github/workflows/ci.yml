@@ -16,6 +16,12 @@ jobs:
       - name: Pre-install
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          wget -nd -np -P /tmp https://www.tbi.univie.ac.at/RNA/download/sourcecode/2_4_x/$VIENNARNA.tar.gz
+          tar -xf /tmp/$VIENNARNA.tar.gz -C /tmp
+          cd /tmp/$VIENNARNA
+          ./configure && make -j$(nproc) && make install
+        env:
+          VIENNARNA: ViennaRNA-2.4.18
 
   verify:
     name: Verify
