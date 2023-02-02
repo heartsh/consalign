@@ -31,7 +31,7 @@ fn test_consalign() {
     DEFAULT_MIN_ALIGN_PROB_ALIGN,
     ScoringModel::Ensemble,
     TrainType::TrainedTransfer,
-    false,
+    true,
     DEFAULT_MIN_BPP_ALIGN_TURNER,
     DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER,
     false,
