@@ -258,6 +258,13 @@ pub const MIX_COEFF: Prob = 0.5;
 pub const TRAINED_FEATURE_SCORE_SETS_FILE_PATH_POSTERIOR: &'static str =
   "../src/trained_feature_scores.rs";
 pub const BASEPAIR_COUNT_POSTERIOR_ALIFOLD: Prob = 2.;
+pub const DEFAULT_SCORING_MODEL: &str = "ensemble";
+pub enum ScoringModel {
+  Ensemble,
+  Turner,
+  Trained,
+}
+pub const OUTPUT_DIR_PATH: &str = "assets/sampled_trnas";
 
 pub fn build_guide_tree<T>(
   fasta_records: &FastaRecords,
@@ -753,7 +760,7 @@ pub fn update_mea_mats_with_col_pairs<'a, T, U>(
   let (i, k) = *col_pair_left;
   let ref right_bp_cols = struct_align_pair.0.right_bp_col_sets_with_cols[&i];
   let ref right_bp_cols_2 = struct_align_pair.1.right_bp_col_sets_with_cols[&k];
-  let align_weight_left = align_weight_mat[&col_pair_left];
+  let align_weight_left = align_weight_mat[col_pair_left];
   for &(j, weight) in right_bp_cols.iter() {
     for &(l, weight_2) in right_bp_cols_2.iter() {
       let col_pair_right = (j, l);
@@ -1107,6 +1114,8 @@ where
   T: HashIndex,
   U: HashIndex,
 {
+  let cwd = env::current_dir().unwrap();
+  let sa_file_path = cwd.join(sa_file_path);
   let mut writer_2_sa_file = BufWriter::new(File::create(sa_file_path.clone()).unwrap());
   let mut buf_4_writer_2_sa_file = format!("CLUSTAL format sequence alignment\n\n");
   let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
@@ -1149,6 +1158,7 @@ where
   ];
   let _ = env::set_current_dir(&output_dir_path);
   let _ = run_command("RNAalifold", &args, "Failed to run RNAalifold");
+  let _ = env::set_current_dir(cwd);
   let mut bpp_mat_alifold = SparseProbMat::<U>::default();
   let output_file_path = output_dir_path.join(String::from(sa_file_prefix) + "_0001_ali.out");
   let output_file = BufReader::new(File::open(output_file_path.clone()).unwrap());
@@ -1247,4 +1257,226 @@ where
     insert_prob_set_pair.1[j] -= align_prob;
   }
   insert_prob_set_pair
+}
+
+pub fn wrapped_consalign<T, U>(
+  thread_pool: &mut Pool,
+  fasta_records: &FastaRecords,
+  output_dir_path: &Path,
+  input_file_path: &Path,
+  min_bpp: Prob,
+  min_align_prob: Prob,
+  scoring_model: ScoringModel,
+  train_type: TrainType,
+  disable_alifold: bool,
+  min_bpp_turner: Prob,
+  min_align_prob_turner: Prob,
+  disable_transplant: bool,
+) -> (MeaStructAlign<T, U>, FeatureCountsPosterior)
+where
+  T: HashIndex,
+  U: HashIndex,
+{
+  let mut align_feature_score_sets = AlignFeatureCountSets::new(0.);
+  if disable_transplant {
+    align_feature_score_sets.transfer();
+  } else {
+    copy_feature_count_sets_align(
+      &mut align_feature_score_sets,
+      &FeatureCountSets::load_trained_score_params(),
+    );
+  }
+  let seqs = fasta_records.iter().map(|x| &x.seq[..]).collect();
+  let (prob_mat_sets_turner, align_prob_mat_pairs_with_rna_id_pairs_turner) =
+    if matches!(scoring_model, ScoringModel::Ensemble)
+      || matches!(scoring_model, ScoringModel::Turner)
+    {
+      consprob::<T>(
+        thread_pool,
+        &seqs,
+        min_bpp_turner,
+        min_align_prob_turner,
+        false,
+        true,
+        &align_feature_score_sets,
+      )
+    } else {
+      (
+        ProbMatSets::<T>::default(),
+        AlignProbMatSetsWithRnaIdPairs::<T>::default(),
+      )
+    };
+  let align_prob_mats_with_rna_id_pairs_turner: SparseProbMatsWithRnaIdPairs<T> =
+    align_prob_mat_pairs_with_rna_id_pairs_turner
+      .iter()
+      .map(|(key, x)| (*key, x.align_prob_mat.clone()))
+      .collect();
+  let bpp_mats_turner: SparseProbMats<T> = prob_mat_sets_turner
+    .iter()
+    .map(|x| x.bpp_mat.clone())
+    .collect();
+  drop(prob_mat_sets_turner);
+  drop(align_prob_mat_pairs_with_rna_id_pairs_turner);
+  let (prob_mat_sets_trained, align_prob_mat_pairs_with_rna_id_pairs_trained) =
+    if matches!(scoring_model, ScoringModel::Ensemble)
+      || matches!(scoring_model, ScoringModel::Trained)
+    {
+      consprob_trained::<T>(
+        thread_pool,
+        &seqs,
+        min_bpp,
+        min_align_prob,
+        false,
+        true,
+        train_type,
+      )
+    } else {
+      (
+        ProbMatSets::<T>::default(),
+        AlignProbMatSetsWithRnaIdPairs::<T>::default(),
+      )
+    };
+  let align_prob_mats_with_rna_id_pairs_trained: SparseProbMatsWithRnaIdPairs<T> =
+    align_prob_mat_pairs_with_rna_id_pairs_trained
+      .iter()
+      .map(|(key, x)| (*key, x.align_prob_mat.clone()))
+      .collect();
+  let bpp_mats_trained: SparseProbMats<T> = prob_mat_sets_trained
+    .iter()
+    .map(|x| x.bpp_mat.clone())
+    .collect();
+  drop(prob_mat_sets_trained);
+  drop(align_prob_mat_pairs_with_rna_id_pairs_trained);
+  let num_of_fasta_records = fasta_records.len();
+  let mut bpp_mats_fused = vec![SparseProbMat::<T>::new(); num_of_fasta_records];
+  let mut align_prob_mats_with_rna_id_pairs_fused = SparseProbMatsWithRnaIdPairs::<T>::default();
+  let mut insert_prob_set_pairs_with_rna_id_pairs = ProbSetPairsWithRnaIdPairs::default();
+  for rna_id_1 in 0..num_of_fasta_records {
+    for rna_id_2 in rna_id_1 + 1..num_of_fasta_records {
+      let rna_id_pair = (rna_id_1, rna_id_2);
+      align_prob_mats_with_rna_id_pairs_fused.insert(rna_id_pair, SparseProbMat::<T>::default());
+      insert_prob_set_pairs_with_rna_id_pairs.insert(rna_id_pair, (Probs::new(), Probs::new()));
+    }
+  }
+  if matches!(scoring_model, ScoringModel::Ensemble) {
+    thread_pool.scoped(|scope| {
+      for (bpp_mat_fused, bpp_mat_turner, bpp_mat_trained) in multizip((
+        bpp_mats_fused.iter_mut(),
+        bpp_mats_turner.iter(),
+        bpp_mats_trained.iter(),
+      )) {
+        scope.execute(move || {
+          *bpp_mat_fused = bpp_mat_turner
+            .iter()
+            .map(|(pos_pair, &bpp)| (*pos_pair, 0.5 * bpp))
+            .collect();
+          for (pos_pair, bpp_trained) in bpp_mat_trained {
+            let bpp_trained = 0.5 * bpp_trained;
+            match bpp_mat_fused.get_mut(pos_pair) {
+              Some(bpp_fused) => {
+                *bpp_fused += bpp_trained;
+              }
+              None => {
+                bpp_mat_fused.insert(*pos_pair, bpp_trained);
+              }
+            }
+          }
+        });
+      }
+    });
+    thread_pool.scoped(|scope| {
+      for (rna_id_pair, align_prob_mat_fused) in align_prob_mats_with_rna_id_pairs_fused.iter_mut()
+      {
+        let ref align_prob_mat_turner = align_prob_mats_with_rna_id_pairs_turner[rna_id_pair];
+        let ref align_prob_mat_trained = align_prob_mats_with_rna_id_pairs_trained[rna_id_pair];
+        scope.execute(move || {
+          *align_prob_mat_fused = align_prob_mat_turner
+            .iter()
+            .map(|(pos_pair, &align_prob)| (*pos_pair, 0.5 * align_prob))
+            .collect();
+          for (pos_pair, align_prob_trained) in align_prob_mat_trained {
+            let align_prob_trained = 0.5 * align_prob_trained;
+            match align_prob_mat_fused.get_mut(pos_pair) {
+              Some(align_prob_fused) => {
+                *align_prob_fused += align_prob_trained;
+              }
+              None => {
+                align_prob_mat_fused.insert(*pos_pair, align_prob_trained);
+              }
+            }
+          }
+        });
+      }
+    });
+  } else if matches!(scoring_model, ScoringModel::Turner) {
+    bpp_mats_fused = bpp_mats_turner.clone();
+    align_prob_mats_with_rna_id_pairs_fused = align_prob_mats_with_rna_id_pairs_turner.clone();
+  } else {
+    bpp_mats_fused = bpp_mats_trained.clone();
+    align_prob_mats_with_rna_id_pairs_fused = align_prob_mats_with_rna_id_pairs_trained.clone();
+  }
+  thread_pool.scoped(|scope| {
+    for (rna_id_pair, insert_prob_set_pair) in insert_prob_set_pairs_with_rna_id_pairs.iter_mut() {
+      let ref align_prob_mat = align_prob_mats_with_rna_id_pairs_fused[rna_id_pair];
+      let seq_len_pair = (
+        fasta_records[rna_id_pair.0].seq.len(),
+        fasta_records[rna_id_pair.1].seq.len(),
+      );
+      scope.execute(move || {
+        *insert_prob_set_pair = get_insert_prob_set_pair(align_prob_mat, &seq_len_pair);
+      });
+    }
+  });
+  if !output_dir_path.exists() {
+    let _ = create_dir(output_dir_path);
+  }
+  let input_file_prefix = input_file_path.file_stem().unwrap().to_str().unwrap();
+  let sa_file_path = output_dir_path.join(&format!("{}.aln", input_file_prefix));
+  let mut candidates = Vec::new();
+  for log_gamma_align in MIN_LOG_GAMMA_ALIGN..MAX_LOG_GAMMA_ALIGN + 1 {
+    let align_count_posterior = (2. as Prob).powi(log_gamma_align) + 1.;
+    for log_gamma_basepair in MIN_LOG_GAMMA_BASEPAIR..MAX_LOG_GAMMA_BASEPAIR + 1 {
+      let basepair_count_posterior = (2. as Prob).powi(log_gamma_basepair) + 1.;
+      let mut feature_scores = FeatureCountsPosterior::new(align_count_posterior);
+      feature_scores.basepair_count_posterior = basepair_count_posterior;
+      candidates.push((feature_scores, MeaStructAlign::new()));
+    }
+  }
+  thread_pool.scoped(|scope| {
+    let ref ref_2_align_prob_mats_with_rna_id_pairs = align_prob_mats_with_rna_id_pairs_fused;
+    let ref ref_2_bpp_mats = bpp_mats_fused;
+    let ref ref_2_insert_prob_set_pairs_with_rna_id_pairs = insert_prob_set_pairs_with_rna_id_pairs;
+    for candidate in &mut candidates {
+      scope.execute(move || {
+        candidate.1 = consalign::<T, U>(
+          fasta_records,
+          ref_2_align_prob_mats_with_rna_id_pairs,
+          ref_2_bpp_mats,
+          &candidate.0,
+          ref_2_insert_prob_set_pairs_with_rna_id_pairs,
+        );
+      });
+    }
+  });
+  let mut sa = MeaStructAlign::new();
+  let mut feature_scores = FeatureCountsPosterior::new(0.);
+  for candidate in &candidates {
+    let ref tmp_sa = candidate.1;
+    if tmp_sa.sps > sa.sps {
+      feature_scores = candidate.0.clone();
+      sa = tmp_sa.clone();
+    }
+  }
+  sa.sort();
+  sa.struct_align.seq_align.seqs = fasta_records.iter().map(|x| x.seq.clone()).collect();
+  let bpp_mat_alifold = if disable_alifold {
+    SparseProbMat::<U>::default()
+  } else {
+    get_bpp_mat_alifold(&sa, &sa_file_path, fasta_records, output_dir_path)
+  };
+  let mix_bpp_mat = get_mix_bpp_mat(&sa, &bpp_mats_fused, &bpp_mat_alifold, disable_alifold);
+  let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
+  let sa_len = U::from_usize(sa_len).unwrap();
+  sa.struct_align.bp_pos_pairs = consalifold(&mix_bpp_mat, sa_len, BASEPAIR_COUNT_POSTERIOR_ALIFOLD);
+  (sa, feature_scores)
 }
