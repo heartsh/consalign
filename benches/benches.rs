@@ -25,7 +25,7 @@ fn bench_consalign(criterion: &mut Criterion) {
   let output_dir_path = Path::new(OUTPUT_DIR_PATH);
   criterion.bench_function("wrapped_consalign::<u8, u8>", |b| {
     b.iter(|| {
-      let _ = wrapped_consalign::<u8, u8>(
+      let _ = wrapped_consalign::<u8, u8>((
         &mut thread_pool,
         &fasta_records,
         output_dir_path,
@@ -38,7 +38,7 @@ fn bench_consalign(criterion: &mut Criterion) {
         DEFAULT_MIN_BPP_ALIGN_TURNER,
         DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER,
         false,
-      );
+      ));
     });
   });
 }

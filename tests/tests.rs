@@ -22,7 +22,7 @@ fn test_consalign() {
   let num_of_threads = num_cpus::get() as NumOfThreads;
   let mut thread_pool = Pool::new(num_of_threads);
   let output_dir_path = Path::new(OUTPUT_DIR_PATH);
-  let (sa, feature_scores) = wrapped_consalign::<u8, u8>(
+  let (sa, feature_scores) = wrapped_consalign::<u8, u8>((
     &mut thread_pool,
     &fasta_records,
     output_dir_path,
@@ -35,7 +35,7 @@ fn test_consalign() {
     DEFAULT_MIN_BPP_ALIGN_TURNER,
     DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER,
     false,
-  );
+  ));
   let num_of_rnas = sa.rna_ids.len();
   let pos_maps_with_gaps_only = vec![0; num_of_rnas];
   for (i, pos_maps) in sa.struct_align.seq_align.pos_map_sets.iter().enumerate() {

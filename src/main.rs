@@ -23,17 +23,13 @@ fn main() {
   opts.optopt(
     "",
     "min_base_pair_prob",
-    &format!(
-      "A minimum base-pairing probability (Use {DEFAULT_MIN_BPP_ALIGN} by default)"
-    ),
+    &format!("A minimum base-pairing probability (Use {DEFAULT_MIN_BPP_ALIGN} by default)"),
     "FLOAT",
   );
   opts.optopt(
     "",
     "min_align_prob",
-    &format!(
-      "A minimum aligning probability (Use {DEFAULT_MIN_ALIGN_PROB_ALIGN} by default)"
-    ),
+    &format!("A minimum aligning probability (Use {DEFAULT_MIN_ALIGN_PROB_ALIGN} by default)"),
     "FLOAT",
   );
   opts.optopt(
@@ -132,8 +128,7 @@ fn main() {
     } else if scoring_model_str == "trained" {
       ScoringModel::Trained
     } else {
-      assert!(false);
-      ScoringModel::Ensemble
+      panic!();
     }
   } else {
     ScoringModel::Ensemble
@@ -147,8 +142,7 @@ fn main() {
     } else if train_type_str == "transferred_only" {
       TrainType::TransferredOnly
     } else {
-      assert!(false);
-      TrainType::TrainedTransfer
+      panic!();
     }
   } else {
     TrainType::TrainedTransfer
@@ -170,59 +164,9 @@ fn main() {
     fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
   }
   let mut thread_pool = Pool::new(num_of_threads);
-  if max_seq_len <= u8::MAX as usize {
-    multi_threaded_consalign::<u8, u16>(
-      &mut thread_pool,
-      &fasta_records,
-      output_dir_path,
-      input_file_path,
-      min_bpp,
-      min_align_prob,
-      scoring_model,
-      train_type,
-      disable_alifold,
-      min_bpp_turner,
-      min_align_prob_turner,
-      disable_transplant,
-    );
-  } else {
-    multi_threaded_consalign::<u16, u16>(
-      &mut thread_pool,
-      &fasta_records,
-      output_dir_path,
-      input_file_path,
-      min_bpp,
-      min_align_prob,
-      scoring_model,
-      train_type,
-      disable_alifold,
-      min_bpp_turner,
-      min_align_prob_turner,
-      disable_transplant,
-    );
-  }
-}
-
-fn multi_threaded_consalign<T, U>(
-  thread_pool: &mut Pool,
-  fasta_records: &FastaRecords,
-  output_dir_path: &Path,
-  input_file_path: &Path,
-  min_bpp: Prob,
-  min_align_prob: Prob,
-  scoring_model: ScoringModel,
-  train_type: TrainType,
-  disable_alifold: bool,
-  min_bpp_turner: Prob,
-  min_align_prob_turner: Prob,
-  disable_transplant: bool,
-) where
-  T: HashIndex,
-  U: HashIndex,
-{
-  let (sa, feature_scores) = wrapped_consalign::<T, U>(
-    thread_pool,
-    fasta_records,
+  let inputs = (
+    &mut thread_pool,
+    &fasta_records,
     output_dir_path,
     input_file_path,
     min_bpp,
@@ -234,6 +178,20 @@ fn multi_threaded_consalign<T, U>(
     min_align_prob_turner,
     disable_transplant,
   );
+  if max_seq_len <= u8::MAX as usize {
+    multi_threaded_consalign::<u8, u16>(inputs);
+  } else {
+    multi_threaded_consalign::<u16, u16>(inputs);
+  }
+}
+
+fn multi_threaded_consalign<T, U>(inputs: Inputs4WrappedConsalign)
+where
+  T: HashIndex,
+  U: HashIndex,
+{
+  let (_, fasta_records, output_dir_path, _, _, _, _, _, _, _, _, _) = inputs;
+  let (sa, feature_scores) = wrapped_consalign::<T, U>(inputs);
   let output_file_path = output_dir_path.join("consalign.sth");
   write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores);
   let mut readme_contents = String::from(README_CONTENTS_2);
@@ -264,12 +222,10 @@ fn write_stockholm_file<T, U>(
     .max()
     .unwrap();
   let max_seq_id_len = max_seq_id_len.max(descriptor_len);
-  let num_of_rnas = sa.rna_ids.len();
-  for rna_id in 0..num_of_rnas {
-    let seq_id = &fasta_records[rna_id].fasta_id;
+  for (rna_id, fasta_record) in fasta_records.iter().enumerate() {
+    let seq_id = &fasta_record.fasta_id;
     buf_4_writer_2_output_file.push_str(seq_id);
     let mut stockholm_row = vec![b' '; max_seq_id_len - seq_id.len() + 2];
-    let fasta_record = &fasta_records[rna_id];
     let seq = &fasta_record.seq;
     let mut sa_row = (0..sa_len)
       .map(|x| {
