@@ -1,6 +1,6 @@
 extern crate consalign;
-extern crate num_cpus;
 extern crate crossbeam;
+extern crate num_cpus;
 
 use consalign::*;
 use std::env;
@@ -277,7 +277,9 @@ fn write_stockholm_file<T, U>(
     let ref seq = fasta_record.seq;
     let mut sa_row = (0..sa_len)
       .map(|x| {
-        let pos_map = sa.struct_align.seq_align.pos_map_sets[x][rna_id].to_usize().unwrap();
+        let pos_map = sa.struct_align.seq_align.pos_map_sets[x][rna_id]
+          .to_usize()
+          .unwrap();
         if pos_map == 0 {
           GAP
         } else {

@@ -40,11 +40,15 @@ fn test_consalign() {
   let pos_maps_with_gaps_only = vec![0; num_of_rnas];
   for (i, pos_maps) in sa.struct_align.seq_align.pos_map_sets.iter().enumerate() {
     assert!(*pos_maps != pos_maps_with_gaps_only);
-    if i == 0 {continue;}
+    if i == 0 {
+      continue;
+    }
     let prev_pos_maps = &sa.struct_align.seq_align.pos_map_sets[i - 1];
     for (&pos, &prev_pos) in pos_maps.iter().zip(prev_pos_maps.iter()) {
       assert!(pos > prev_pos || pos == 0);
     }
   }
-  assert!(feature_scores.align_count_posterior > 1. && feature_scores.basepair_count_posterior > 1.);
+  assert!(
+    feature_scores.align_count_posterior > 1. && feature_scores.basepair_count_posterior > 1.
+  );
 }
