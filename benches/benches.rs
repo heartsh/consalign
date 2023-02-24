@@ -9,35 +9,37 @@ fn bench_consalign(criterion: &mut Criterion) {
   let fasta_file_reader = Reader::from_file(Path::new(&input_file_path)).unwrap();
   let mut fasta_records = FastaRecords::new();
   let mut max_seq_len = 0;
-  for fasta_record in fasta_file_reader.records() {
-    let fasta_record = fasta_record.unwrap();
-    let mut seq = convert(fasta_record.seq());
-    seq.insert(0, PSEUDO_BASE);
-    seq.push(PSEUDO_BASE);
-    let seq_len = seq.len();
-    if seq_len > max_seq_len {
-      max_seq_len = seq_len;
+  for x in fasta_file_reader.records() {
+    let x = x.unwrap();
+    let mut y = bytes2seq(x.seq());
+    y.insert(0, PSEUDO_BASE);
+    y.push(PSEUDO_BASE);
+    let z = y.len();
+    if z > max_seq_len {
+      max_seq_len = z;
     }
-    fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
+    fasta_records.push(FastaRecord::new(String::from(x.id()), y));
   }
-  let num_of_threads = num_cpus::get() as NumOfThreads;
-  let mut thread_pool = Pool::new(num_of_threads);
+  let num_threads = num_cpus::get() as NumThreads;
+  let mut thread_pool = Pool::new(num_threads);
   let output_dir_path = Path::new(OUTPUT_DIR_PATH);
-  criterion.bench_function("wrapped_consalign::<u8, u8>", |b| {
-    b.iter(|| {
-      let _ = wrapped_consalign::<u8, u8>((
+  let disables_alifold = true;
+  let disables_transplant = false;
+  criterion.bench_function("wrapped_consalign::<u8, u8>", |x| {
+    x.iter(|| {
+      let _ = consalign_wrapped::<u8, u8>((
         &mut thread_pool,
         &fasta_records,
         output_dir_path,
         input_file_path,
-        DEFAULT_MIN_BPP_ALIGN,
-        DEFAULT_MIN_ALIGN_PROB_ALIGN,
-        ScoringModel::Ensemble,
+        DEFAULT_BASEPAIR_PROB_TRAINED,
+        DEFAULT_MATCH_PROB_TRAINED,
+        ScoreModel::Ensemble,
         TrainType::TrainedTransfer,
-        true,
-        DEFAULT_MIN_BPP_ALIGN_TURNER,
-        DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER,
-        false,
+        disables_alifold,
+        DEFAULT_BASEPAIR_PROB_TURNER,
+        DEFAULT_MATCH_PROB_TURNER,
+        disables_transplant,
       ));
     });
   });

@@ -5,9 +5,7 @@ extern crate num_cpus;
 use consalign::*;
 use std::env;
 
-type MeaCssStr = MeaSsStr;
-
-const README_CONTENTS_2: &str = "# consalign.sth\nThis file type contains a predicted RNA structural alignment in the Stockholm format\n\n";
+const README_CONTENTS_CONSALIGN: &str = "# consalign.sth\nThis file type contains a predicted RNA structural alignment in the Stockholm format\n\n";
 
 fn main() {
   let args = env::args().collect::<Args>();
@@ -22,47 +20,47 @@ fn main() {
   opts.reqopt("o", "output_dir_path", "An output directory path", "STR");
   opts.optopt(
     "",
-    "min_base_pair_prob",
-    &format!("A minimum base-pairing probability (Use {DEFAULT_MIN_BPP_ALIGN} by default)"),
+    "min_basepair_prob_trained",
+    &format!("A minimum base-pairing probability for the ConsTrain model (Use {DEFAULT_BASEPAIR_PROB_TRAINED} by default)"),
     "FLOAT",
   );
   opts.optopt(
     "",
-    "min_align_prob",
-    &format!("A minimum aligning probability (Use {DEFAULT_MIN_ALIGN_PROB_ALIGN} by default)"),
+    "min_match_prob_trained",
+    &format!("A minimum matching probability for the ConsTrain model (Use {DEFAULT_MATCH_PROB_TRAINED} by default)"),
     "FLOAT",
   );
   opts.optopt(
     "",
-    "min_base_pair_prob_turner",
+    "min_basepair_prob_turner",
     &format!(
-      "A minimum base-pairing probability for Turner's model (Use {DEFAULT_MIN_BPP_ALIGN_TURNER} by default)"
+      "A minimum base-pairing probability for Turner's model (Use {DEFAULT_BASEPAIR_PROB_TURNER} by default)"
     ),
     "FLOAT",
   );
   opts.optopt(
     "",
-    "min_align_prob_turner",
+    "min_match_prob_turner",
     &format!(
-      "A minimum aligning probability for Turner's model (Use {DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER} by default)"
+      "A minimum matching probability for Turner's model (Use {DEFAULT_MATCH_PROB_TURNER} by default)"
     ),
     "FLOAT",
   );
-  opts.optopt("m", "scoring_model", &format!("Choose a structural alignment scoring model from ensemble, turner, trained (Use {DEFAULT_SCORING_MODEL} by default)"), "STR");
-  opts.optopt("u", "train_type", &format!("Choose a scoring parameter training type from trained_transfer, trained_random_init, transferred_only (Use {DEFAULT_TRAIN_TYPE} by default)"), "STR");
+  opts.optopt("m", "score_model", &format!("Choose a structural alignment scoring model from ensemble, turner, trained (Use {DEFAULT_SCORE_MODEL} by default)"), "STR");
+  opts.optopt("u", "train_type", &format!("Choose a scoring parameter training type from trained_transfer, trained_randinit, transferred_only (Use {DEFAULT_TRAIN_TYPE} by default)"), "STR");
   opts.optflag(
     "d",
-    "disable_alifold",
+    "disables_alifold",
     "Disable RNAalifold used in ConsAlifold",
   );
   opts.optflag(
     "p",
-    "disable_transplant",
+    "disables_transplant",
     "Do not transplant trained sequence alignment parameters into Turner's model",
   );
   opts.optopt(
     "t",
-    "num_of_threads",
+    "num_threads",
     "The number of threads in multithreading (Use all the threads of this computer by default)",
     "UINT",
   );
@@ -80,66 +78,66 @@ fn main() {
   }
   let input_file_path = matches.opt_str("i").unwrap();
   let input_file_path = Path::new(&input_file_path);
-  let num_of_threads = if matches.opt_present("t") {
+  let num_threads = if matches.opt_present("t") {
     matches.opt_str("t").unwrap().parse().unwrap()
   } else {
-    num_cpus::get() as NumOfThreads
+    num_cpus::get() as NumThreads
   };
   let output_dir_path = matches.opt_str("o").unwrap();
   let output_dir_path = Path::new(&output_dir_path);
-  let min_bpp = if matches.opt_present("min_base_pair_prob") {
+  let min_basepair_prob_trained = if matches.opt_present("min_basepair_prob_trained") {
     matches
-      .opt_str("min_base_pair_prob")
+      .opt_str("min_basepair_prob_trained")
       .unwrap()
       .parse()
       .unwrap()
   } else {
-    DEFAULT_MIN_BPP_ALIGN
+    DEFAULT_BASEPAIR_PROB_TRAINED
   };
-  let min_align_prob = if matches.opt_present("min_align_prob") {
-    matches.opt_str("min_align_prob").unwrap().parse().unwrap()
+  let min_match_prob_trained = if matches.opt_present("min_match_prob_trained") {
+    matches.opt_str("min_match_prob_trained").unwrap().parse().unwrap()
   } else {
-    DEFAULT_MIN_ALIGN_PROB_ALIGN
+    DEFAULT_MATCH_PROB_TRAINED
   };
-  let min_bpp_turner = if matches.opt_present("min_base_pair_prob_turner") {
+  let min_basepair_prob_turner = if matches.opt_present("min_basepair_prob_turner") {
     matches
-      .opt_str("min_base_pair_prob_turner")
+      .opt_str("min_basepair_prob_turner")
       .unwrap()
       .parse()
       .unwrap()
   } else {
-    DEFAULT_MIN_BPP_ALIGN_TURNER
+    DEFAULT_BASEPAIR_PROB_TURNER
   };
-  let min_align_prob_turner = if matches.opt_present("min_align_prob_turner") {
+  let min_match_prob_turner = if matches.opt_present("min_match_prob_turner") {
     matches
-      .opt_str("min_align_prob_turner")
+      .opt_str("min_match_prob_turner")
       .unwrap()
       .parse()
       .unwrap()
   } else {
-    DEFAULT_MIN_ALIGN_PROB_ALIGN_TURNER
+    DEFAULT_MATCH_PROB_TURNER
   };
-  let scoring_model = if matches.opt_present("m") {
-    let scoring_model_str = matches.opt_str("m").unwrap();
-    if scoring_model_str == "ensemble" {
-      ScoringModel::Ensemble
-    } else if scoring_model_str == "turner" {
-      ScoringModel::Turner
-    } else if scoring_model_str == "trained" {
-      ScoringModel::Trained
+  let score_model = if matches.opt_present("m") {
+    let x = matches.opt_str("m").unwrap();
+    if x == "ensemble" {
+      ScoreModel::Ensemble
+    } else if x == "turner" {
+      ScoreModel::Turner
+    } else if x == "trained" {
+      ScoreModel::Trained
     } else {
       panic!();
     }
   } else {
-    ScoringModel::Ensemble
+    ScoreModel::Ensemble
   };
   let train_type = if matches.opt_present("u") {
-    let train_type_str = matches.opt_str("u").unwrap();
-    if train_type_str == "trained_transfer" {
+    let x = matches.opt_str("u").unwrap();
+    if x == "trained_transfer" {
       TrainType::TrainedTransfer
-    } else if train_type_str == "trained_random_init" {
-      TrainType::TrainedRandomInit
-    } else if train_type_str == "transferred_only" {
+    } else if x == "trained_random_init" {
+      TrainType::TrainedRandinit
+    } else if x == "transferred_only" {
       TrainType::TransferredOnly
     } else {
       panic!();
@@ -147,122 +145,122 @@ fn main() {
   } else {
     TrainType::TrainedTransfer
   };
-  let disable_alifold = matches.opt_present("d");
-  let disable_transplant = matches.opt_present("p");
+  let disables_alifold = matches.opt_present("d");
+  let disables_transplant = matches.opt_present("p");
   let fasta_file_reader = Reader::from_file(Path::new(&input_file_path)).unwrap();
   let mut fasta_records = FastaRecords::new();
   let mut max_seq_len = 0;
-  for fasta_record in fasta_file_reader.records() {
-    let fasta_record = fasta_record.unwrap();
-    let mut seq = convert(fasta_record.seq());
-    seq.insert(0, PSEUDO_BASE);
-    seq.push(PSEUDO_BASE);
-    let seq_len = seq.len();
-    if seq_len > max_seq_len {
-      max_seq_len = seq_len;
+  for x in fasta_file_reader.records() {
+    let x = x.unwrap();
+    let mut y = bytes2seq(x.seq());
+    y.insert(0, PSEUDO_BASE);
+    y.push(PSEUDO_BASE);
+    let z = y.len();
+    if z > max_seq_len {
+      max_seq_len = z;
     }
-    fasta_records.push(FastaRecord::new(String::from(fasta_record.id()), seq));
+    fasta_records.push(FastaRecord::new(String::from(x.id()), y));
   }
-  let mut thread_pool = Pool::new(num_of_threads);
+  let mut thread_pool = Pool::new(num_threads);
   let inputs = (
     &mut thread_pool,
     &fasta_records,
     output_dir_path,
     input_file_path,
-    min_bpp,
-    min_align_prob,
-    scoring_model,
+    min_basepair_prob_trained,
+    min_match_prob_trained,
+    score_model,
     train_type,
-    disable_alifold,
-    min_bpp_turner,
-    min_align_prob_turner,
-    disable_transplant,
+    disables_alifold,
+    min_basepair_prob_turner,
+    min_match_prob_turner,
+    disables_transplant,
   );
   if max_seq_len <= u8::MAX as usize {
-    multi_threaded_consalign::<u8, u16>(inputs);
+    consalign_multithreaded::<u8, u16>(inputs);
   } else {
-    multi_threaded_consalign::<u16, u16>(inputs);
+    consalign_multithreaded::<u16, u16>(inputs);
   }
 }
 
-fn multi_threaded_consalign<T, U>(inputs: Inputs4WrappedConsalign)
+fn consalign_multithreaded<T, U>(inputs: InputsConsalignWrapped)
 where
   T: HashIndex,
   U: HashIndex,
 {
-  let (_, fasta_records, output_dir_path, _, _, _, _, _, _, _, _, _) = inputs;
-  let (sa, feature_scores) = wrapped_consalign::<T, U>(inputs);
-  let output_file_path = output_dir_path.join("consalign.sth");
-  write_stockholm_file(&output_file_path, fasta_records, &sa, &feature_scores);
-  let mut readme_contents = String::from(README_CONTENTS_2);
-  readme_contents.push_str(README_CONTENTS);
-  write_readme(output_dir_path, &readme_contents);
+  let (_, x, y, _, _, _, _, _, _, _, _, _) = inputs;
+  let (z, a) = consalign_wrapped::<T, U>(inputs);
+  let b = y.join("consalign.sth");
+  write_stockholm_file(&b, x, &z, &a);
+  let mut a = String::from(README_CONTENTS_CONSALIGN);
+  a.push_str(README_CONTENTS);
+  write_readme(y, &a);
 }
 
 fn write_stockholm_file<T, U>(
   output_file_path: &Path,
   fasta_records: &FastaRecords,
-  sa: &MeaStructAlign<T, U>,
-  feature_scores: &FeatureCountsPosterior,
+  alignfold: &AlignfoldWrapped<T, U>,
+  alignfold_hyperparams: &AlignfoldHyperparams,
 ) where
   T: HashIndex,
   U: HashIndex,
 {
-  let mut writer_2_output_file = BufWriter::new(File::create(output_file_path).unwrap());
-  let mut buf_4_writer_2_output_file = format!(
-    "# STOCKHOLM 1.0\n#=GF GA gamma_align={} gamma_basepair={} expected_sps={}\n",
-    feature_scores.align_count_posterior, feature_scores.basepair_count_posterior, sa.sps
+  let mut writer = BufWriter::new(File::create(output_file_path).unwrap());
+  let mut buf = format!(
+    "# STOCKHOLM 1.0\n#=GF GA hyperparam_match={} hyperparam_basepair={} expected_accuracy={}\n",
+    alignfold_hyperparams.param_match, alignfold_hyperparams.param_basepair, alignfold.accuracy
   );
-  let sa_len = sa.struct_align.seq_align.pos_map_sets.len();
+  let align_len = alignfold.alignfold.align.pos_map_sets.len();
   let descriptor = "#=GC SS_cons";
   let descriptor_len = descriptor.len();
   let max_seq_id_len = fasta_records
     .iter()
-    .map(|fasta_record| fasta_record.fasta_id.len())
+    .map(|x| x.fasta_id.len())
     .max()
     .unwrap();
   let max_seq_id_len = max_seq_id_len.max(descriptor_len);
-  for (rna_id, fasta_record) in fasta_records.iter().enumerate() {
-    let seq_id = &fasta_record.fasta_id;
-    buf_4_writer_2_output_file.push_str(seq_id);
-    let mut stockholm_row = vec![b' '; max_seq_id_len - seq_id.len() + 2];
-    let seq = &fasta_record.seq;
-    let mut sa_row = (0..sa_len)
-      .map(|x| {
-        let pos_map = sa.struct_align.seq_align.pos_map_sets[x][rna_id]
+  for (x, y) in fasta_records.iter().enumerate() {
+    let z = &y.fasta_id;
+    buf.push_str(z);
+    let mut a = vec![b' '; max_seq_id_len - z.len() + 2];
+    let y = &y.seq;
+    let mut z = (0..align_len)
+      .map(|z| {
+        let z = alignfold.alignfold.align.pos_map_sets[z][x]
           .to_usize()
           .unwrap();
-        if pos_map == 0 {
+        if z == 0 {
           GAP
         } else {
-          revert_char(seq[pos_map])
+          base2char(y[z])
         }
       })
       .collect::<Vec<Char>>();
-    stockholm_row.append(&mut sa_row);
-    let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
-    buf_4_writer_2_output_file.push_str(stockholm_row);
-    buf_4_writer_2_output_file.push('\n');
+    a.append(&mut z);
+    let a = unsafe { from_utf8_unchecked(&a) };
+    buf.push_str(a);
+    buf.push('\n');
   }
-  buf_4_writer_2_output_file.push_str(descriptor);
+  buf.push_str(descriptor);
   let mut stockholm_row = vec![b' '; max_seq_id_len - descriptor_len + 2];
-  let mut mea_css_str = get_mea_css_str(sa, sa_len);
-  stockholm_row.append(&mut mea_css_str);
+  let mut fold_str = get_fold_str(alignfold, /* align_len */);
+  stockholm_row.append(&mut fold_str);
   let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
-  buf_4_writer_2_output_file.push_str(stockholm_row);
-  buf_4_writer_2_output_file.push_str("\n//");
-  let _ = writer_2_output_file.write_all(buf_4_writer_2_output_file.as_bytes());
+  buf.push_str(stockholm_row);
+  buf.push_str("\n//");
+  let _ = writer.write_all(buf.as_bytes());
 }
 
-fn get_mea_css_str<T, U>(sa: &MeaStructAlign<T, U>, sa_len: usize) -> MeaCssStr
+fn get_fold_str<T, U>(x: &AlignfoldWrapped <T, U>) -> FoldStr
 where
   T: HashIndex,
   U: HashIndex,
 {
-  let mut mea_css_str = vec![UNPAIRING_BASE; sa_len];
-  for &(i, j) in &sa.struct_align.bp_pos_pairs {
-    mea_css_str[i.to_usize().unwrap()] = BASE_PAIRING_LEFT_BASE;
-    mea_css_str[j.to_usize().unwrap()] = BASE_PAIRING_RIGHT_BASE;
+  let mut y = vec![UNPAIR; x.alignfold.align.pos_map_sets.len()];
+  for &(i, j) in &x.alignfold.basepairs {
+    y[i.to_usize().unwrap()] = BASEPAIR_LEFT;
+    y[j.to_usize().unwrap()] = BASEPAIR_RIGHT;
   }
-  mea_css_str
+  y
 }
