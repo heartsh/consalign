@@ -95,7 +95,11 @@ fn main() {
     DEFAULT_BASEPAIR_PROB_TRAINED
   };
   let min_match_prob_trained = if matches.opt_present("min_match_prob_trained") {
-    matches.opt_str("min_match_prob_trained").unwrap().parse().unwrap()
+    matches
+      .opt_str("min_match_prob_trained")
+      .unwrap()
+      .parse()
+      .unwrap()
   } else {
     DEFAULT_MATCH_PROB_TRAINED
   };
@@ -244,7 +248,7 @@ fn write_stockholm_file<T, U>(
   }
   buf.push_str(descriptor);
   let mut stockholm_row = vec![b' '; max_seq_id_len - descriptor_len + 2];
-  let mut fold_str = get_fold_str(alignfold, /* align_len */);
+  let mut fold_str = get_fold_str(alignfold /* align_len */);
   stockholm_row.append(&mut fold_str);
   let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
   buf.push_str(stockholm_row);
@@ -252,7 +256,7 @@ fn write_stockholm_file<T, U>(
   let _ = writer.write_all(buf.as_bytes());
 }
 
-fn get_fold_str<T, U>(x: &AlignfoldWrapped <T, U>) -> FoldStr
+fn get_fold_str<T, U>(x: &AlignfoldWrapped<T, U>) -> FoldStr
 where
   T: HashIndex,
   U: HashIndex,

@@ -368,8 +368,7 @@ where
         (argmax.1, i)
       };
       let z = guide_tree_scores.remove(&x).unwrap();
-      let z = (cluster_size_pair.0 as Score * y
-        + cluster_size_pair.1 as Score * z)
+      let z = (cluster_size_pair.0 as Score * y + cluster_size_pair.1 as Score * z)
         / new_cluster_size as Score;
       guide_tree_scores.insert((i, new_cluster_id), z);
     }
@@ -399,11 +398,8 @@ where
   T: HashIndex,
   U: HashIndex,
 {
-  let (guide_tree, root) = build_guide_tree(
-    fasta_records,
-    match_probs_hashed_ids,
-    alignfold_hyperparams,
-  );
+  let (guide_tree, root) =
+    build_guide_tree(fasta_records, match_probs_hashed_ids, alignfold_hyperparams);
   let ends_alignfold = true;
   recursive_alignfold((
     &guide_tree,
@@ -417,9 +413,7 @@ where
   ))
 }
 
-pub fn recursive_alignfold<T, U>(
-  inputs: InputsRecursiveAlignfold<T>,
-) -> AlignfoldWrapped<T, U>
+pub fn recursive_alignfold<T, U>(inputs: InputsRecursiveAlignfold<T>) -> AlignfoldWrapped<T, U>
 where
   T: HashIndex,
   U: HashIndex,
@@ -507,18 +501,8 @@ where
   U: HashIndex,
 {
   let align_len_pair = (
-    alignfold_pair
-      .0
-      .alignfold
-      .align
-      .pos_map_sets
-      .len(),
-    alignfold_pair
-      .1
-      .alignfold
-      .align
-      .pos_map_sets
-      .len(),
+    alignfold_pair.0.alignfold.align.pos_map_sets.len(),
+    alignfold_pair.1.alignfold.align.pos_map_sets.len(),
   );
   let rna_num_pair = (
     alignfold_pair.0.rna_ids.len(),
@@ -552,17 +536,9 @@ where
       let pos_maps2 = &pos_map_sets2[long_j - 1];
       for (&x, &y) in rna_ids.iter().zip(pos_maps.iter()) {
         for (&z, &a) in rna_ids2.iter().zip(pos_maps2.iter()) {
-          let b = if x < z {
-            (x, z)
-          } else {
-            (z, x)
-          };
+          let b = if x < z { (x, z) } else { (z, x) };
           let c = &match_probs_hashed_ids[&b];
-          let d = if x < z {
-            (y, a)
-          } else {
-            (a, y)
-          };
+          let d = if x < z { (y, a) } else { (a, y) };
           if let Some(&c) = c.get(&d) {
             match_prob_sum += c;
           }
@@ -639,12 +615,7 @@ where
         }
         if let Some(&l) = alignfold_pair.1.rightmost_basepairs_hashed_cols.get(&k) {
           let y = (i, j, k, l);
-          let scores = get_scores(
-            &scores_hashed_cols,
-            &match_scores,
-            &y,
-            &align_shell,
-          );
+          let scores = get_scores(&scores_hashed_cols, &match_scores, &y, &align_shell);
           update_scores_hashed_cols(
             &mut scores_hashed_cols,
             &x,
@@ -672,28 +643,16 @@ where
     alignfold_hyperparams,
     &align_shell,
   ));
-  let align_len = new_alignfold
-    .alignfold
-    .align
-    .pos_map_sets
-    .len();
+  let align_len = new_alignfold.alignfold.align.pos_map_sets.len();
   let pos_maps_gapped_only = vec![T::zero(); num_rnas];
   for i in (0..align_len).rev() {
     let x = &new_alignfold.alignfold.align.pos_map_sets[i];
     if *x == pos_maps_gapped_only {
-      new_alignfold
-        .alignfold
-        .align
-        .pos_map_sets
-        .remove(i);
+      new_alignfold.alignfold.align.pos_map_sets.remove(i);
     }
   }
   if ends_alignfold {
-    let align_len = new_alignfold
-      .alignfold
-      .align
-      .pos_map_sets
-      .len();
+    let align_len = new_alignfold.alignfold.align.pos_map_sets.len();
     for x in &basepairs {
       for i in 0..align_len {
         let y = &new_alignfold.alignfold.align.pos_map_sets[i];
@@ -705,19 +664,13 @@ where
           let y = &new_alignfold.alignfold.align.pos_map_sets[j];
           if *y == x.1 {
             let short_j = U::from_usize(j).unwrap();
-            new_alignfold
-              .alignfold
-              .basepairs
-              .insert((short_i, short_j));
+            new_alignfold.alignfold.basepairs.insert((short_i, short_j));
             break;
           }
         }
       }
     }
-    new_alignfold.set_accuracy(
-      match_probs_hashed_ids,
-      insert_probs_pairs_hashed,
-    );
+    new_alignfold.set_accuracy(match_probs_hashed_ids, insert_probs_pairs_hashed);
   } else {
     new_alignfold.set_right_basepairs(basepair_prob_mats, alignfold_hyperparams);
   }
@@ -846,12 +799,7 @@ where
     alignfold_pair.1.rna_ids.len(),
   );
   let mut score;
-  let scores = get_scores(
-    scores_hashed_cols,
-    match_scores,
-    col_quad,
-    align_shell,
-  );
+  let scores = get_scores(scores_hashed_cols, match_scores, col_quad, align_shell);
   let (i, j, k, l) = *col_quad;
   let (mut u, mut v) = (j - U::one(), l - U::one());
   while u > i || v > k {
@@ -863,16 +811,10 @@ where
         let y = (u - U::one(), v - U::one());
         let y = scores[&y] + x;
         if y == score {
-          let mut z =
-            alignfold_pair.0.alignfold.align.pos_map_sets[long_u - 1].clone();
-          let mut a =
-            alignfold_pair.1.alignfold.align.pos_map_sets[long_v - 1].clone();
+          let mut z = alignfold_pair.0.alignfold.align.pos_map_sets[long_u - 1].clone();
+          let mut a = alignfold_pair.1.alignfold.align.pos_map_sets[long_v - 1].clone();
           z.append(&mut a);
-          new_alignfold
-            .alignfold
-            .align
-            .pos_map_sets
-            .insert(0, z);
+          new_alignfold.alignfold.align.pos_map_sets.insert(0, z);
           u = u - U::one();
           v = v - U::one();
           continue;
@@ -888,10 +830,8 @@ where
           if let Some(&a) = scores.get(&z) {
             let y = a + y;
             if y == score {
-              let mut y =
-                alignfold_pair.0.alignfold.align.pos_map_sets[long_u - 1].clone();
-              let mut a =
-                alignfold_pair.1.alignfold.align.pos_map_sets[long_v - 1].clone();
+              let mut y = alignfold_pair.0.alignfold.align.pos_map_sets[long_u - 1].clone();
+              let mut a = alignfold_pair.1.alignfold.align.pos_map_sets[long_v - 1].clone();
               y.append(&mut a);
               new_alignfold
                 .alignfold
@@ -908,16 +848,9 @@ where
                 alignfold_hyperparams,
                 align_shell,
               ));
-              let x = (
-                x.0.to_usize().unwrap(),
-                x.1.to_usize().unwrap(),
-              );
-              let mut a = alignfold_pair.0.alignfold.align.pos_map_sets
-                [x.0 - 1]
-                .clone();
-              let mut b = alignfold_pair.1.alignfold.align.pos_map_sets
-                [x.1 - 1]
-                .clone();
+              let x = (x.0.to_usize().unwrap(), x.1.to_usize().unwrap());
+              let mut a = alignfold_pair.0.alignfold.align.pos_map_sets[x.0 - 1].clone();
+              let mut b = alignfold_pair.1.alignfold.align.pos_map_sets[x.1 - 1].clone();
               a.append(&mut b);
               new_alignfold
                 .alignfold
@@ -940,15 +873,10 @@ where
     if u > i {
       if let Some(&x) = scores.get(&(u - U::one(), v)) {
         if x == score {
-          let mut x =
-            alignfold_pair.0.alignfold.align.pos_map_sets[long_u - 1].clone();
+          let mut x = alignfold_pair.0.alignfold.align.pos_map_sets[long_u - 1].clone();
           let mut y = vec![T::zero(); rna_num_pair.1];
           x.append(&mut y);
-          new_alignfold
-            .alignfold
-            .align
-            .pos_map_sets
-            .insert(0, x);
+          new_alignfold.alignfold.align.pos_map_sets.insert(0, x);
           u = u - U::one();
           continue;
         }
@@ -958,14 +886,9 @@ where
       if let Some(&x) = scores.get(&(u, v - U::one())) {
         if x == score {
           let mut x = vec![T::zero(); rna_num_pair.0];
-          let mut y =
-            alignfold_pair.1.alignfold.align.pos_map_sets[long_v - 1].clone();
+          let mut y = alignfold_pair.1.alignfold.align.pos_map_sets[long_v - 1].clone();
           x.append(&mut y);
-          new_alignfold
-            .alignfold
-            .align
-            .pos_map_sets
-            .insert(0, x);
+          new_alignfold.alignfold.align.pos_map_sets.insert(0, x);
           v = v - U::one();
         }
       }
@@ -1034,11 +957,8 @@ where
   basepairs
 }
 
-pub fn traceback_alifold<T>(
-  x: &mut SparsePosMat<T>,
-  y: &PosPair<T>,
-  z: &ScoresHashedPoss<T>,
-) where
+pub fn traceback_alifold<T>(x: &mut SparsePosMat<T>, y: &PosPair<T>, z: &ScoresHashedPoss<T>)
+where
   T: HashIndex,
 {
   let mut a;
@@ -1269,10 +1189,7 @@ where
   basepair_probs_mix
 }
 
-pub fn get_insert_probs_pair<T>(
-  x: &SparseProbMat<T>,
-  y: &(usize, usize),
-) -> ProbsPair
+pub fn get_insert_probs_pair<T>(x: &SparseProbMat<T>, y: &(usize, usize)) -> ProbsPair
 where
   T: HashIndex,
 {
@@ -1310,18 +1227,13 @@ where
   if disables_transplant {
     align_scores.transfer();
   } else {
-    copy_alignfold_scores_align(
-      &mut align_scores,
-      &AlignfoldScores::load_trained_scores(),
-    );
+    copy_alignfold_scores_align(&mut align_scores, &AlignfoldScores::load_trained_scores());
   }
   let seqs = fasta_records.iter().map(|x| &x.seq[..]).collect();
   let produces_context_profs = false;
   let produces_match_probs = true;
   let (alignfold_prob_mats_turner, match_probs_hashed_turner) =
-    if matches!(score_model, ScoreModel::Ensemble)
-      || matches!(score_model, ScoreModel::Turner)
-    {
+    if matches!(score_model, ScoreModel::Ensemble) || matches!(score_model, ScoreModel::Turner) {
       consprob::<T>(
         thread_pool,
         &seqs,
@@ -1337,11 +1249,10 @@ where
         MatchProbsHashedIds::<T>::default(),
       )
     };
-  let match_probs_hashed_turner: SparseProbsHashedIds<T> =
-    match_probs_hashed_turner
-      .iter()
-      .map(|(x, y)| (*x, y.match_probs.clone()))
-      .collect();
+  let match_probs_hashed_turner: SparseProbsHashedIds<T> = match_probs_hashed_turner
+    .iter()
+    .map(|(x, y)| (*x, y.match_probs.clone()))
+    .collect();
   let basepair_prob_mats_turner: SparseProbMats<T> = alignfold_prob_mats_turner
     .iter()
     .map(|x| x.basepair_probs.clone())
@@ -1349,9 +1260,7 @@ where
   drop(alignfold_prob_mats_turner);
   // drop(align_prob_mat_pairs_with_rna_id_pairs_turner);
   let (alignfold_prob_mats_trained, match_probs_hashed_trained) =
-    if matches!(score_model, ScoreModel::Ensemble)
-      || matches!(score_model, ScoreModel::Trained)
-    {
+    if matches!(score_model, ScoreModel::Ensemble) || matches!(score_model, ScoreModel::Trained) {
       consprob_trained::<T>(
         thread_pool,
         &seqs,
@@ -1367,11 +1276,10 @@ where
         MatchProbsHashedIds::<T>::default(),
       )
     };
-  let match_probs_hashed_trained: SparseProbsHashedIds<T> =
-    match_probs_hashed_trained
-      .iter()
-      .map(|(x, y)| (*x, y.match_probs.clone()))
-      .collect();
+  let match_probs_hashed_trained: SparseProbsHashedIds<T> = match_probs_hashed_trained
+    .iter()
+    .map(|(x, y)| (*x, y.match_probs.clone()))
+    .collect();
   let basepair_prob_mats_trained: SparseProbMats<T> = alignfold_prob_mats_trained
     .iter()
     .map(|x| x.basepair_probs.clone())
@@ -1397,10 +1305,7 @@ where
         basepair_prob_mats_trained.iter(),
       )) {
         x.execute(move || {
-          *y = z
-            .iter()
-            .map(|(b, &z)| (*b, 0.5 * z))
-            .collect();
+          *y = z.iter().map(|(b, &z)| (*b, 0.5 * z)).collect();
           for (b, a) in a {
             let a = 0.5 * a;
             match y.get_mut(b) {
@@ -1416,8 +1321,7 @@ where
       }
     });
     thread_pool.scoped(|x| {
-      for (y, z) in match_probs_hashed_fused.iter_mut()
-      {
+      for (y, z) in match_probs_hashed_fused.iter_mut() {
         let match_probs_turner = &match_probs_hashed_turner[y];
         let match_probs_trained = &match_probs_hashed_trained[y];
         x.execute(move || {
@@ -1449,10 +1353,7 @@ where
   thread_pool.scoped(|x| {
     for (y, z) in insert_probs_pairs_hashed.iter_mut() {
       let a = &match_probs_hashed_fused[y];
-      let y = (
-        fasta_records[y.0].seq.len(),
-        fasta_records[y.1].seq.len(),
-      );
+      let y = (fasta_records[y.0].seq.len(), fasta_records[y.1].seq.len());
       x.execute(move || {
         *z = get_insert_probs_pair(a, &y);
       });
@@ -1479,13 +1380,7 @@ where
     let a = &insert_probs_pairs_hashed;
     for b in &mut alignfold_candidates {
       x.execute(move || {
-        b.1 = consalign::<T, U>(
-          fasta_records,
-          y,
-          z,
-          &b.0,
-          a,
-        );
+        b.1 = consalign::<T, U>(fasta_records, y, z, &b.0, a);
       });
     }
   });
@@ -1503,9 +1398,19 @@ where
   let basepair_probs_alifold = if disables_alifold {
     SparseProbMat::<U>::default()
   } else {
-    get_basepair_probs_alifold(&alignfold_final, &align_file_path, fasta_records, output_dir_path)
+    get_basepair_probs_alifold(
+      &alignfold_final,
+      &align_file_path,
+      fasta_records,
+      output_dir_path,
+    )
   };
-  let basepair_probs_mix = get_basepair_probs_mix(&alignfold_final, &basepair_prob_mats_fused, &basepair_probs_alifold, disables_alifold);
+  let basepair_probs_mix = get_basepair_probs_mix(
+    &alignfold_final,
+    &basepair_prob_mats_fused,
+    &basepair_probs_alifold,
+    disables_alifold,
+  );
   let align_len = alignfold_final.alignfold.align.pos_map_sets.len();
   let align_len = U::from_usize(align_len).unwrap();
   alignfold_final.alignfold.basepairs =

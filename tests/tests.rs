@@ -50,7 +50,5 @@ fn test_consalign() {
       assert!(x > y || x == 0);
     }
   }
-  assert!(
-    alignfold_hyperparams.param_match > 1. && alignfold_hyperparams.param_basepair > 1.
-  );
+  assert!(alignfold_hyperparams.param_match > 1. && alignfold_hyperparams.param_basepair > 1.);
 }
