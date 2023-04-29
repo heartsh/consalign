@@ -1258,7 +1258,6 @@ where
     .map(|x| x.basepair_probs.clone())
     .collect();
   drop(alignfold_prob_mats_turner);
-  // drop(align_prob_mat_pairs_with_rna_id_pairs_turner);
   let (alignfold_prob_mats_trained, match_probs_hashed_trained) =
     if matches!(score_model, ScoreModel::Ensemble) || matches!(score_model, ScoreModel::Trained) {
       consprob_trained::<T>(
@@ -1285,7 +1284,6 @@ where
     .map(|x| x.basepair_probs.clone())
     .collect();
   drop(alignfold_prob_mats_trained);
-  // drop(align_prob_mat_pairs_with_rna_id_pairs_trained);
   let num_fasta_records = fasta_records.len();
   let mut basepair_prob_mats_fused = vec![SparseProbMat::<T>::new(); num_fasta_records];
   let mut match_probs_hashed_fused = SparseProbsHashedIds::<T>::default();

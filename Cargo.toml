@@ -10,7 +10,6 @@ license = "MIT"
 
 [dependencies]
 num_cpus = "1.0"
-crossbeam = "0.8"
 consprob-trained = "0.1"
 petgraph = "0.6"
 

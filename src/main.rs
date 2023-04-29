@@ -1,5 +1,4 @@
 extern crate consalign;
-extern crate crossbeam;
 extern crate num_cpus;
 
 use consalign::*;
@@ -248,7 +247,7 @@ fn write_stockholm_file<T, U>(
   }
   buf.push_str(descriptor);
   let mut stockholm_row = vec![b' '; max_seq_id_len - descriptor_len + 2];
-  let mut fold_str = get_fold_str(alignfold /* align_len */);
+  let mut fold_str = get_fold_str(alignfold);
   stockholm_row.append(&mut fold_str);
   let stockholm_row = unsafe { from_utf8_unchecked(&stockholm_row) };
   buf.push_str(stockholm_row);
